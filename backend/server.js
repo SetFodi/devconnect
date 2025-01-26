@@ -8,15 +8,15 @@ const mysql = require('mysql2/promise');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
-
+const path = require('path');
 // NEW: Import http and socket.io
 const http = require('http');
 const { Server } = require('socket.io');
-
+const multer = require('multer');
 const app = express();
 app.use(express.json());
 app.use(cors());
-
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // 1) Connect to MySQL using Pool
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
@@ -28,6 +28,34 @@ const pool = mysql.createPool({
   queueLimit: 0,
 });
 
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, 'uploads/'); // Ensure this directory exists
+  },
+  filename: function (req, file, cb) {
+    // Generate a unique filename using the current timestamp and original name
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    // Extract the file extension
+    const ext = path.extname(file.originalname);
+    cb(null, file.fieldname + '-' + uniqueSuffix + ext);
+  }
+});
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = /jpeg|jpg|png|gif/;
+  const mimeType = allowedTypes.test(file.mimetype);
+  const extName = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+  if (mimeType && extName) {
+    return cb(null, true);
+  }
+  cb(new Error('Only images are allowed'));
+};
+
+// Initialize Multer with storage and file filter
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // Limit files to 5MB
+  fileFilter: fileFilter
+});
 // 2) JWT Auth Middleware
 function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
@@ -124,6 +152,10 @@ app.post('/api/auth/login', async (req, res) => {
  * Get current user's profile (JWT-protected)
  * GET /api/profile/me
  */
+/**
+ * Get current user's profile (JWT-protected)
+ * GET /api/profile/me
+ */
 app.get('/api/profile/me', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -131,35 +163,46 @@ app.get('/api/profile/me', authMiddleware, async (req, res) => {
     if (rows.length === 0) {
       return res.json(null);
     }
-    res.json(rows[0]);
+    res.json(rows[0]); // Includes 'profile_picture' field
   } catch (error) {
     console.error('Get profile error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
+
 /**
  * Create or Update profile
  * POST /api/profile
  */
-app.post('/api/profile', authMiddleware, async (req, res) => {
+/**
+ * Create or Update profile with profile picture
+ * POST /api/profile
+ */
+app.post('/api/profile', authMiddleware, upload.single('profile_picture'), async (req, res) => {
   try {
     const userId = req.user.userId;
     const { bio, skills, github_link } = req.body;
+    let profilePicturePath = null;
+
+    if (req.file) {
+      // Assuming the server serves static files from '/uploads'
+      profilePicturePath = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+    }
 
     const [rows] = await pool.query('SELECT * FROM profiles WHERE user_id = ?', [userId]);
     if (rows.length > 0) {
-      // Update
+      // Update existing profile
       await pool.query(
-        'UPDATE profiles SET bio=?, skills=?, github_link=? WHERE user_id=?',
-        [bio, skills, github_link, userId]
+        'UPDATE profiles SET bio=?, skills=?, github_link=?, profile_picture=? WHERE user_id=?',
+        [bio, skills, github_link, profilePicturePath || rows[0].profile_picture, userId]
       );
       return res.json({ message: 'Profile updated' });
     } else {
-      // Create
+      // Create new profile
       await pool.query(
-        'INSERT INTO profiles (user_id, bio, skills, github_link) VALUES (?,?,?,?)',
-        [userId, bio, skills, github_link]
+        'INSERT INTO profiles (user_id, bio, skills, github_link, profile_picture) VALUES (?,?,?,?,?)',
+        [userId, bio, skills, github_link, profilePicturePath]
       );
       return res.status(201).json({ message: 'Profile created' });
     }
@@ -168,6 +211,7 @@ app.post('/api/profile', authMiddleware, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
+
 
 /**
  * Get all profiles (public)

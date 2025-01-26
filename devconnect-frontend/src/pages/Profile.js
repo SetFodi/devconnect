@@ -9,8 +9,9 @@ import { motion } from 'framer-motion';
 
 export default function Profile() {
   const { auth } = useContext(AuthContext);
-  const [profile, setProfile] = useState({ bio: '', skills: '', github_link: '' });
+  const [profile, setProfile] = useState({ bio: '', skills: '', github_link: '', profile_picture: null });
   const [activeTab, setActiveTab] = useState('edit');
+  const [selectedImage, setSelectedImage] = useState(null); // For image preview
 
   const getMyProfile = async () => {
     try {
@@ -27,10 +28,22 @@ export default function Profile() {
   const updateProfile = async (e) => {
     e.preventDefault();
     try {
-      await axios.post('http://localhost:5000/api/profile', profile, {
-        headers: { Authorization: `Bearer ${auth.token}` },
+      const formData = new FormData();
+      formData.append('bio', profile.bio);
+      formData.append('skills', profile.skills);
+      formData.append('github_link', profile.github_link);
+      if (selectedImage) {
+        formData.append('profile_picture', selectedImage);
+      }
+
+      await axios.post('http://localhost:5000/api/profile', formData, {
+        headers: { 
+          Authorization: `Bearer ${auth.token}`,
+          'Content-Type': 'multipart/form-data'
+        },
       });
       toast.success('Profile updated!');
+      setSelectedImage(null); // Reset selected image
       getMyProfile();
     } catch (err) {
       console.error(err);
@@ -38,8 +51,32 @@ export default function Profile() {
     }
   };
 
+  const handleImageChange = (e) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      // Optional: Validate file size and type on the client-side
+      if (file.size > 5 * 1024 * 1024) { // 5MB limit
+        toast.error('File size exceeds 5MB.');
+        return;
+      }
+      const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
+      if (!allowedTypes.includes(file.type)) {
+        toast.error('Only JPEG, PNG, and GIF files are allowed.');
+        return;
+      }
+      setSelectedImage(file);
+      // Optionally, create a preview
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setProfile(prev => ({ ...prev, profile_picture: reader.result }));
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   useEffect(() => {
     getMyProfile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -49,7 +86,12 @@ export default function Profile() {
         animate={{ opacity: 1, y: 0 }}
         className="flex flex-col items-center mb-6"
       >
-        <Avatar name={auth.user.username} size="100" round={true} />
+        <Avatar 
+          src={profile.profile_picture}
+          name={auth.user.username}
+          size="100" 
+          round={true} 
+        />
         <h2 className="text-3xl font-bold mt-4">@{auth.user.username}</h2>
       </motion.div>
 
@@ -79,6 +121,37 @@ export default function Profile() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
         >
+          {/* Profile Picture Upload */}
+          <div>
+            <label className="block font-semibold mb-1" htmlFor="profile_picture">
+              Profile Picture
+            </label>
+            <input
+              type="file"
+              name="profile_picture"
+              id="profile_picture"
+              accept="image/*"
+              onChange={handleImageChange}
+              className="block w-full text-sm text-gray-900 dark:text-gray-200
+                file:mr-4 file:py-2 file:px-4
+                file:rounded-full file:border-0
+                file:text-sm file:font-semibold
+                file:bg-blue-50 file:text-blue-700
+                hover:file:bg-blue-100 dark:file:bg-gray-600 dark:file:text-gray-200
+              "
+            />
+            {profile.profile_picture && (
+              <div className="mt-2">
+                <img 
+                  src={profile.profile_picture} 
+                  alt="Profile Preview" 
+                  className="w-24 h-24 object-cover rounded-full"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Bio Field */}
           <div>
             <label className="block font-semibold mb-1">Bio</label>
             <textarea
@@ -88,6 +161,8 @@ export default function Profile() {
               onChange={(e) => setProfile({ ...profile, bio: e.target.value })}
             />
           </div>
+
+          {/* Skills Field */}
           <div>
             <label className="block font-semibold mb-1">Skills (comma separated)</label>
             <input
@@ -96,6 +171,8 @@ export default function Profile() {
               onChange={(e) => setProfile({ ...profile, skills: e.target.value })}
             />
           </div>
+
+          {/* GitHub Link Field */}
           <div>
             <label className="block font-semibold mb-1">GitHub Link</label>
             <input
@@ -104,6 +181,8 @@ export default function Profile() {
               onChange={(e) => setProfile({ ...profile, github_link: e.target.value })}
             />
           </div>
+
+          {/* Submit Button */}
           <button className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition-colors duration-300">
             Save Profile
           </button>
@@ -131,6 +210,15 @@ export default function Profile() {
                 GitHub Profile
               </a>
             </p>
+          )}
+          {profile.profile_picture && (
+            <div className="mt-4 flex justify-center">
+              <img 
+                src={profile.profile_picture} 
+                alt="Profile" 
+                className="w-32 h-32 object-cover rounded-full"
+              />
+            </div>
           )}
         </motion.div>
       )}

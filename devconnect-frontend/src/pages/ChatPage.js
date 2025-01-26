@@ -1,7 +1,11 @@
 // frontend/src/pages/ChatPage.js
+
 import React, { useContext, useEffect, useState } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { io } from 'socket.io-client';
+import { toast } from 'react-toastify';
+import Avatar from 'react-avatar';
+import { motion } from 'framer-motion';
 
 let socket;
 
@@ -28,6 +32,10 @@ export default function ChatPage() {
     // 3) Listen for "userTyping" event
     socket.on('userTyping', (user) => {
       setTyping(user ? `${user} is typing...` : '');
+    });
+
+    socket.on('connect_error', () => {
+      toast.error('Connection to chat failed.');
     });
 
     return () => {
@@ -58,22 +66,37 @@ export default function ChatPage() {
 
   return (
     <div className="max-w-xl mx-auto p-4 pt-24">
-      <h2 className="text-2xl font-bold mb-4">Community Chat</h2>
+      <h2 className="text-2xl font-bold mb-4 text-center">Community Chat</h2>
 
-      <div className="border rounded p-4 h-64 mb-2 overflow-auto bg-white shadow space-y-2">
+      <div className="border rounded p-4 h-80 mb-2 overflow-auto bg-white dark:bg-gray-700 shadow space-y-2">
         {messages.map((m, idx) => (
-          <div key={m.id ? m.id : idx} className="mb-2">
-            <strong>{m.user}:</strong> {m.text}
-            <span className="text-gray-500 text-sm"> ({m.time})</span>
-          </div>
+          <motion.div
+            key={m.id ? m.id : idx}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className={`flex items-start space-x-2 ${
+              m.user === auth.user.username ? 'flex-row-reverse space-x-reverse' : ''
+            }`}
+          >
+            <Avatar name={m.user} size="40" round={true} />
+            <div className={`flex flex-col ${m.user === auth.user.username ? 'items-end' : 'items-start'}`}>
+              <div className="flex items-center space-x-2">
+                <span className="font-semibold">{m.user}</span>
+                <span className="text-gray-500 text-sm">{m.time}</span>
+              </div>
+              <p className="bg-blue-100 dark:bg-blue-900 text-gray-800 dark:text-gray-200 px-4 py-2 rounded-lg max-w-xs">
+                {m.text}
+              </p>
+            </div>
+          </motion.div>
         ))}
       </div>
 
-      {typing && <p className="text-sm italic text-gray-500 h-4 mb-2">{typing}</p>}
+      {typing && <p className="text-sm italic text-gray-500 dark:text-gray-400 h-4 mb-2">{typing}</p>}
 
       <div className="flex">
         <input
-          className="border p-2 rounded-l w-full focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+          className="border border-gray-300 dark:border-gray-600 p-2 rounded-l w-full focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all bg-gray-100 dark:bg-gray-600 text-gray-800 dark:text-gray-200"
           placeholder="Type your message..."
           value={message}
           onChange={handleChange}

@@ -1,67 +1,107 @@
 // frontend/src/pages/Developers.js
+
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
+import { debounce } from 'lodash';
+import { motion } from 'framer-motion';
+import Avatar from 'react-avatar';
+import ClipLoader from 'react-spinners/ClipLoader'; // Ensure this is installed
 
 export default function Developers() {
   const [profiles, setProfiles] = useState([]);
   const [filter, setFilter] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const fetchProfiles = async () => {
+  const fetchProfiles = async (searchTerm = '') => {
+    setLoading(true);
     try {
-      const res = await axios.get('http://localhost:5000/api/profile');
+      const res = await axios.get('http://localhost:5000/api/profile', {
+        params: { search: searchTerm },
+      });
       setProfiles(res.data);
     } catch (err) {
       console.error(err);
+    } finally {
+      setLoading(false);
     }
+  };
+
+  // Debounce the search input to prevent excessive API calls
+  const debouncedFetch = debounce((value) => {
+    fetchProfiles(value);
+  }, 500);
+
+  const handleSearchChange = (e) => {
+    const value = e.target.value;
+    setFilter(value);
+    debouncedFetch(value);
   };
 
   useEffect(() => {
     fetchProfiles();
+    return () => {
+      debouncedFetch.cancel();
+    };
   }, []);
 
-  const filteredProfiles = profiles.filter((p) => {
-    if (!filter) return true;
-    return p.skills?.toLowerCase().includes(filter.toLowerCase());
-  });
-
   return (
-    <div className="max-w-3xl mx-auto p-4 pt-24">
-      <h1 className="text-3xl font-bold mb-4">Developers</h1>
-      <div className="mb-4">
+    <div className="max-w-4xl mx-auto p-4 pt-24">
+      <h1 className="text-4xl font-extrabold mb-6 text-center text-gradient bg-gradient-to-r from-blue-500 to-purple-500 bg-clip-text text-transparent">
+        Developers
+      </h1>
+      <div className="mb-6">
         <input
           type="text"
-          placeholder="Filter by skill..."
-          className="border p-2 rounded w-full focus:ring-2 focus:ring-blue-500 transition-all"
+          placeholder="Search by skill or username..."
+          className="border border-gray-300 dark:border-gray-600 rounded w-full p-3 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm dark:bg-gray-600 dark:text-gray-200"
           value={filter}
-          onChange={(e) => setFilter(e.target.value)}
+          onChange={handleSearchChange}
         />
       </div>
-      {/* Developer Cards */}
-      <div className="grid md:grid-cols-2 gap-4">
-        {filteredProfiles.map((profile) => (
-          <div
-            key={profile.id}
-            className="border rounded shadow p-4 bg-white hover:shadow-lg transform transition duration-300 hover:-translate-y-1"
-          >
-            <p className="font-semibold mb-1">Bio: {profile.bio}</p>
-            <p className="mb-1">
-              <strong>Skills:</strong> {profile.skills}
-            </p>
-            {profile.github_link && (
-              <p>
-                <a 
-                  href={profile.github_link} 
-                  target="_blank" 
-                  rel="noreferrer" 
-                  className="text-blue-600 underline"
-                >
-                  GitHub
-                </a>
-              </p>
-            )}
-          </div>
-        ))}
-      </div>
+      {loading ? (
+        <div className="flex justify-center">
+          <ClipLoader color="#3b82f6" loading={loading} size={30} />
+        </div>
+      ) : (
+        <div className="grid md:grid-cols-3 gap-6">
+          {profiles.length > 0 ? (
+            profiles.map((profile) => (
+              <motion.div
+                key={profile.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-white dark:bg-gray-700 p-6 rounded shadow hover:shadow-lg transition-shadow duration-300"
+              >
+                <div className="flex items-center space-x-4 mb-4">
+                  <Avatar 
+                    name={profile.username || 'User'} // Use username instead of user_id
+                    size="50" 
+                    round={true} 
+                    className="mr-2" 
+                  />
+                  <h3 className="text-xl font-semibold">@{profile.username || 'User'}</h3>
+                </div>
+                <p className="mb-2 text-gray-800 dark:text-gray-200">{profile.bio || 'No bio available.'}</p>
+                <p className="mb-2">
+                  <strong>Skills:</strong> {profile.skills || 'No skills listed.'}
+                </p>
+                {profile.github_link && (
+                  <a
+                    href={profile.github_link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 dark:text-blue-400 underline"
+                  >
+                    GitHub Profile
+                  </a>
+                )}
+              </motion.div>
+            ))
+          ) : (
+            <p className="text-center text-gray-500 dark:text-gray-400 col-span-full">No developers found.</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

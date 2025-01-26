@@ -1,5 +1,6 @@
 // frontend/src/context/AuthContext.js
-import { createContext, useState, useEffect } from 'react';
+import { createContext, useState } from 'react';
+import { toast } from 'react-toastify';
 
 export const AuthContext = createContext();
 
@@ -13,12 +14,14 @@ export const AuthProvider = ({ children }) => {
     localStorage.setItem('token', token);
     localStorage.setItem('user', JSON.stringify(user));
     setAuth({ token, user });
+    toast.success('Logged in successfully!');
   };
 
   const logout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     setAuth({ token: null, user: null });
+    toast.info('Logged out successfully.');
   };
 
   return (

@@ -173,9 +173,20 @@ app.post('/api/profile', authMiddleware, async (req, res) => {
  * Get all profiles (public)
  * GET /api/profile
  */
+// server.js (Search in Profiles)
+
+// server.js
+
 app.get('/api/profile', async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT * FROM profiles');
+    const search = req.query.search || '';
+    const [rows] = await pool.query(`
+      SELECT p.*, u.username 
+      FROM profiles p
+      JOIN users u ON p.user_id = u.id
+      WHERE p.skills LIKE ? OR u.username LIKE ?
+    `, [`%${search}%`, `%${search}%`]);
+
     res.json(rows);
   } catch (error) {
     console.error('Get all profiles error:', error);
@@ -183,9 +194,15 @@ app.get('/api/profile', async (req, res) => {
   }
 });
 
+
+
 /*******************************************************
  * POSTS & COMMENTS
  *******************************************************/
+/**
+ * Create Post
+ * POST /api/posts
+ */
 /**
  * Create Post
  * POST /api/posts
@@ -197,13 +214,32 @@ app.post('/api/posts', authMiddleware, async (req, res) => {
     if (!content) {
       return res.status(400).json({ message: 'Content is required' });
     }
-    await pool.query('INSERT INTO posts (user_id, content) VALUES (?, ?)', [userId, content]);
-    res.status(201).json({ message: 'Post created' });
+    const [result] = await pool.query('INSERT INTO posts (user_id, content) VALUES (?, ?)', [userId, content]);
+    
+    // Fetch the created post with additional data
+    const [rows] = await pool.query(`
+      SELECT 
+        p.id, 
+        p.user_id, 
+        p.content, 
+        p.created_at, 
+        u.username, 
+        COUNT(l.post_id) AS likeCount,
+        0 AS isLiked
+      FROM posts p
+      JOIN users u ON p.user_id = u.id
+      LEFT JOIN likes l ON l.post_id = p.id
+      WHERE p.id = ?
+      GROUP BY p.id
+    `, [result.insertId]);
+
+    res.status(201).json({ message: 'Post created', post: rows[0] });
   } catch (error) {
     console.error('Create post error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
+
 
 /**
  * Edit Post
@@ -306,9 +342,16 @@ app.delete('/api/posts/:id/like', authMiddleware, async (req, res) => {
  * Get all posts
  * GET /api/posts
  */
+// server.js (Partial)
+
+// server.js (Partial Corrections)
+
 app.get('/api/posts', async (req, res) => {
   try {
-    // We JOIN the "likes" table and GROUP BY post IDs to count how many times each post was liked
+    const page = parseInt(req.query.page) || 1; // Current page number
+    const limit = parseInt(req.query.limit) || 10; // Posts per page
+    const offset = (page - 1) * limit;
+
     const [rows] = await pool.query(`
       SELECT 
         p.*, 
@@ -321,7 +364,9 @@ app.get('/api/posts', async (req, res) => {
         ON l.post_id = p.id
       GROUP BY p.id
       ORDER BY p.created_at DESC
-    `);
+      LIMIT ? OFFSET ?
+    `, [limit, offset]);
+
     res.json(rows);
   } catch (error) {
     console.error('Get posts error:', error);
@@ -329,15 +374,13 @@ app.get('/api/posts', async (req, res) => {
   }
 });
 
-/**
- * Get All Posts For Auth'd User (with isLiked)
- * GET /api/posts/me
- */
 app.get('/api/posts/me', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
-    // We LEFT JOIN to get likeCount
-    // Then also LEFT JOIN specifically for this user's like (alias l2)
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
     const [rows] = await pool.query(`
       SELECT
         p.id,
@@ -353,7 +396,8 @@ app.get('/api/posts/me', authMiddleware, async (req, res) => {
       LEFT JOIN likes l2 ON (l2.post_id = p.id AND l2.user_id = ?)
       GROUP BY p.id
       ORDER BY p.created_at DESC
-    `, [userId]);
+      LIMIT ? OFFSET ?
+    `, [userId, limit, offset]);
 
     res.json(rows);
   } catch (error) {
@@ -362,10 +406,14 @@ app.get('/api/posts/me', authMiddleware, async (req, res) => {
   }
 });
 
+
+
 /**
  * Delete a post (must be the owner)
  * DELETE /api/posts/:id
  */
+// server.js (Delete Post Route Optimization)
+
 app.delete('/api/posts/:id', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -377,36 +425,16 @@ app.delete('/api/posts/:id', authMiddleware, async (req, res) => {
       return res.status(403).json({ message: 'Not authorized or post not found' });
     }
 
-    // Start a transaction to ensure atomicity
-    const connection = await pool.getConnection();
-    try {
-      await connection.beginTransaction();
+    // Delete the post (likes and comments will be deleted automatically)
+    await pool.query('DELETE FROM posts WHERE id=?', [postId]);
 
-      // Delete associated likes
-      await connection.query('DELETE FROM likes WHERE post_id=?', [postId]);
-
-      // If you have comments, delete them similarly
-      // await connection.query('DELETE FROM comments WHERE post_id=?', [postId]);
-
-      // Delete the post
-      await connection.query('DELETE FROM posts WHERE id=?', [postId]);
-
-      // Commit the transaction
-      await connection.commit();
-      res.json({ message: 'Post and associated likes deleted successfully' });
-    } catch (transError) {
-      // Rollback the transaction in case of error
-      await connection.rollback();
-      console.error('Transaction error:', transError);
-      res.status(500).json({ message: 'Server error during deletion' });
-    } finally {
-      connection.release();
-    }
+    res.json({ message: 'Post deleted successfully' });
   } catch (error) {
     console.error('Delete post error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
+
 
 /**
  * Create a comment

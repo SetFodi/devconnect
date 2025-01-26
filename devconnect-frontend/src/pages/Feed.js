@@ -8,6 +8,7 @@ import { toast } from 'react-toastify';
 import ClipLoader from 'react-spinners/ClipLoader'; // For loading spinner
 import InfiniteScroll from 'react-infinite-scroll-component';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Link } from 'react-router-dom';
 
 export default function Feed() {
   const [posts, setPosts] = useState([]);
@@ -21,26 +22,40 @@ export default function Feed() {
   const fetchPosts = async (currentPage = 1) => {
     setLoading(true);
     try {
-      const res = await axios.get(
-        auth.token 
-          ? `http://localhost:5000/api/posts/me?page=${currentPage}`
-          : `http://localhost:5000/api/posts?page=${currentPage}`,
-        auth.token 
-          ? { headers: { Authorization: `Bearer ${auth.token}` } }
-          : {}
-      );
-      const fetchedPosts = res.data;
+      if (!auth.token) {
+        // If not authenticated, fetch public posts or do nothing
+        const res = await axios.get(`http://localhost:5000/api/posts?page=${currentPage}`);
+        const fetchedPosts = res.data;
 
-      if (fetchedPosts.length === 0) {
-        setHasMore(false);
+        if (fetchedPosts.length === 0) {
+          setHasMore(false);
+        } else {
+          setPosts((prev) => {
+            // Prevent duplication by ensuring unique posts
+            const newPosts = fetchedPosts.filter(
+              (fetchedPost) => !prev.some((prevPost) => prevPost.id === fetchedPost.id)
+            );
+            return [...prev, ...newPosts];
+          });
+        }
       } else {
-        setPosts((prev) => {
-          // Prevent duplication by ensuring unique posts
-          const newPosts = fetchedPosts.filter(
-            (fetchedPost) => !prev.some((prevPost) => prevPost.id === fetchedPost.id)
-          );
-          return [...prev, ...newPosts];
+        // If authenticated, fetch user-specific posts
+        const res = await axios.get(`http://localhost:5000/api/posts/me?page=${currentPage}`, {
+          headers: { Authorization: `Bearer ${auth.token}` }
         });
+        const fetchedPosts = res.data;
+
+        if (fetchedPosts.length === 0) {
+          setHasMore(false);
+        } else {
+          setPosts((prev) => {
+            // Prevent duplication by ensuring unique posts
+            const newPosts = fetchedPosts.filter(
+              (fetchedPost) => !prev.some((prevPost) => prevPost.id === fetchedPost.id)
+            );
+            return [...prev, ...newPosts];
+          });
+        }
       }
     } catch (err) {
       console.error(err);
@@ -52,6 +67,7 @@ export default function Feed() {
 
   useEffect(() => {
     fetchPosts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.token]);
 
   // Handle creating a new post
@@ -96,6 +112,28 @@ export default function Feed() {
     toast.success('Post deleted successfully.');
   };
 
+  if (!auth.token) {
+    // If not authenticated, show a prompt to log in
+    return (
+      <div className="flex flex-col justify-center items-center min-h-screen bg-gray-100 dark:bg-gray-900 px-4">
+        <div className="max-w-md bg-white dark:bg-gray-800 p-8 rounded-lg shadow-lg text-center">
+          <h2 className="text-3xl font-bold mb-4 text-gray-800 dark:text-gray-100">Welcome to DevConnect!</h2>
+          <p className="text-gray-600 dark:text-gray-300 mb-6">
+            To view and interact with the developer feed, please log in or register an account.
+          </p>
+          <div className="flex justify-center space-x-4">
+            <Link to="/login" className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors duration-300">
+              Login
+            </Link>
+            <Link to="/register" className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition-colors duration-300">
+              Register
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-3xl mx-auto p-4 pt-24">
       <h1 className="text-4xl font-extrabold mb-6 text-center text-gradient bg-gradient-to-r from-blue-500 to-purple-500 bg-clip-text text-transparent">
@@ -114,6 +152,7 @@ export default function Feed() {
             placeholder="Share something amazing..."
             value={newPost}
             onChange={(e) => setNewPost(e.target.value)}
+            aria-label="New Post Content"
           />
           <button
             onClick={handleCreatePost}

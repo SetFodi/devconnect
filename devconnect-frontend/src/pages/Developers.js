@@ -6,6 +6,7 @@ import { debounce } from 'lodash';
 import { motion } from 'framer-motion';
 import Avatar from 'react-avatar';
 import ClipLoader from 'react-spinners/ClipLoader'; // Ensure this is installed
+import { toast } from 'react-toastify'; // Import toast
 
 export default function Developers() {
   const [profiles, setProfiles] = useState([]);
@@ -21,6 +22,7 @@ export default function Developers() {
       setProfiles(res.data);
     } catch (err) {
       console.error(err);
+      toast.error('Error fetching profiles.'); // Now toast is defined
     } finally {
       setLoading(false);
     }
@@ -73,12 +75,21 @@ export default function Developers() {
                 className="bg-white dark:bg-gray-700 p-6 rounded shadow hover:shadow-lg transition-shadow duration-300"
               >
                 <div className="flex items-center space-x-4 mb-4">
-                  <Avatar 
-                    name={profile.username || 'User'} // Use username instead of user_id
-                    size="50" 
-                    round={true} 
-                    className="mr-2" 
-                  />
+                  {/* Conditionally Render Profile Picture or Avatar */}
+                  {profile.profile_picture ? (
+                    <img
+                      src={profile.profile_picture}
+                      alt={`${profile.username}'s profile`}
+                      className="w-12 h-12 rounded-full object-cover"
+                    />
+                  ) : (
+                    <Avatar 
+                      name={profile.username || 'User'} 
+                      size="50" 
+                      round={true} 
+                      className="mr-2" 
+                    />
+                  )}
                   <h3 className="text-xl font-semibold">@{profile.username || 'User'}</h3>
                 </div>
                 <p className="mb-2 text-gray-800 dark:text-gray-200">{profile.bio || 'No bio available.'}</p>

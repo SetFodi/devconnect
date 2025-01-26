@@ -225,11 +225,11 @@ app.get('/api/profile', async (req, res) => {
   try {
     const search = req.query.search || '';
     const [rows] = await pool.query(`
-      SELECT p.*, u.username 
+      SELECT p.profile_picture, u.username, p.bio, p.skills, p.github_link
       FROM profiles p
       JOIN users u ON p.user_id = u.id
       WHERE p.skills LIKE ? OR u.username LIKE ?
-    `, [`%${search}%`, `%${search}%`]);
+    `, [`%${search}%`, `%${search}%`]);    
 
     res.json(rows);
   } catch (error) {
@@ -400,10 +400,13 @@ app.get('/api/posts', async (req, res) => {
       SELECT 
         p.*, 
         u.username, 
+        pr.profile_picture,
         COUNT(l.post_id) AS likeCount
       FROM posts p
       JOIN users u 
         ON p.user_id = u.id
+      LEFT JOIN profiles pr
+        ON p.user_id = pr.user_id
       LEFT JOIN likes l 
         ON l.post_id = p.id
       GROUP BY p.id
@@ -417,6 +420,7 @@ app.get('/api/posts', async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
+
 
 app.get('/api/posts/me', authMiddleware, async (req, res) => {
   try {
@@ -432,10 +436,12 @@ app.get('/api/posts/me', authMiddleware, async (req, res) => {
         p.content,
         p.created_at,
         u.username,
+        pr.profile_picture,
         COUNT(l1.post_id) AS likeCount,
         CASE WHEN l2.id IS NOT NULL THEN 1 ELSE 0 END AS isLiked
       FROM posts p
       JOIN users u ON p.user_id = u.id
+      LEFT JOIN profiles pr ON p.user_id = pr.user_id
       LEFT JOIN likes l1 ON l1.post_id = p.id
       LEFT JOIN likes l2 ON (l2.post_id = p.id AND l2.user_id = ?)
       GROUP BY p.id
@@ -534,14 +540,20 @@ const io = new Server(httpServer, {
   }
 });
 
-// 4. Listen for connections:
+
 io.on('connection', async (socket) => {
   console.log('A user connected:', socket.id);
 
   // 1) Send existing chat history to the *newly connected* client
   try {
-    const [rows] = await pool.query('SELECT * FROM chat_messages ORDER BY created_at ASC');
-    // We'll send an event like "chatHistory" with all messages
+    // Fetch chat messages along with user profile pictures
+    const [rows] = await pool.query(`
+      SELECT cm.*, u.username, p.profile_picture
+      FROM chat_messages cm
+      JOIN users u ON cm.user = u.username
+      LEFT JOIN profiles p ON u.id = p.user_id
+      ORDER BY cm.created_at ASC
+    `);
     socket.emit('chatHistory', rows);
   } catch (err) {
     console.error('Error fetching chat history:', err);
@@ -549,14 +561,40 @@ io.on('connection', async (socket) => {
 
   // 2) Listen for new messages
   socket.on('chatMessage', async (msg) => {
-    // Insert the new message into 'chat_messages'
     try {
+      // Validate and sanitize the incoming message
+      const { user, text, time } = msg;
+      
+      // Fetch the user's profile picture
+      const [userRows] = await pool.query(`
+        SELECT p.profile_picture
+        FROM users u
+        JOIN profiles p ON u.id = p.user_id
+        WHERE u.username = ?
+        LIMIT 1
+      `, [user]);
+
+      let profilePicture = null;
+      if (userRows.length > 0) {
+        profilePicture = userRows[0].profile_picture;
+      }
+
+      // Insert the new message into 'chat_messages'
       await pool.query(
         'INSERT INTO chat_messages (user, text, time) VALUES (?, ?, ?)',
-        [msg.user, msg.text, msg.time]
+        [user, text, time]
       );
-      // Once inserted, broadcast to everyone
-      io.emit('chatMessage', msg);
+
+      // Prepare the message object with profile_picture
+      const messageWithPicture = {
+        user,
+        text,
+        time,
+        profile_picture: profilePicture, // Can be null if not set
+      };
+
+      // Broadcast to everyone
+      io.emit('chatMessage', messageWithPicture);
     } catch (err) {
       console.error('Error inserting chat message:', err);
     }
@@ -571,6 +609,7 @@ io.on('connection', async (socket) => {
     console.log('User disconnected:', socket.id);
   });
 });
+
 
 /*******************************************************
  * START SERVER

@@ -59,6 +59,7 @@ export default function ChatPage() {
       text: message,
       // We can store time as a string or actual DATETIME
       time: new Date().toLocaleTimeString(),
+      // profile_picture will be handled by the backend
     };
     socket.emit('chatMessage', msgObj);
     setMessage('');
@@ -78,10 +79,20 @@ export default function ChatPage() {
               m.user === auth.user.username ? 'flex-row-reverse space-x-reverse' : ''
             }`}
           >
-            <Avatar name={m.user} size="40" round={true} />
+            {/* Conditionally Render Profile Picture or Avatar */}
+            {m.profile_picture ? (
+              <img
+                src={m.profile_picture}
+                alt={`${m.user}'s profile`}
+                className="w-10 h-10 rounded-full object-cover"
+              />
+            ) : (
+              <Avatar name={m.user} size="40" round={true} />
+            )}
+
             <div className={`flex flex-col ${m.user === auth.user.username ? 'items-end' : 'items-start'}`}>
               <div className="flex items-center space-x-2">
-                <span className="font-semibold">{m.user}</span>
+                <span className="font-semibold">@{m.user}</span>
                 <span className="text-gray-500 text-sm">{m.time}</span>
               </div>
               <p className="bg-blue-100 dark:bg-blue-900 text-gray-800 dark:text-gray-200 px-4 py-2 rounded-lg max-w-xs">

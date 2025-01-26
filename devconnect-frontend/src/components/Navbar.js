@@ -6,11 +6,13 @@ import { AuthContext } from '../context/AuthContext';
 import Avatar from 'react-avatar';
 import { FaSun, FaMoon } from 'react-icons/fa';
 import { motion, AnimatePresence } from 'framer-motion';
+import axios from 'axios';
 
 export default function Navbar() {
   const { auth, logout } = useContext(AuthContext);
   const [menuOpen, setMenuOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
+  const [profilePicture, setProfilePicture] = useState(null);
   const location = useLocation(); // To determine active link
 
   useEffect(() => {
@@ -27,7 +29,30 @@ export default function Navbar() {
       setDarkMode(false);
       document.documentElement.classList.remove('dark');
     }
-  }, []);
+
+    // Fetch profile picture if authenticated
+    const fetchProfilePicture = async () => {
+      if (auth.token) {
+        try {
+          const res = await axios.get('http://localhost:5000/api/profile/me', {
+            headers: { Authorization: `Bearer ${auth.token}` },
+          });
+          if (res.data && res.data.profile_picture) {
+            setProfilePicture(res.data.profile_picture);
+          } else {
+            setProfilePicture(null);
+          }
+        } catch (err) {
+          console.error('Error fetching profile picture:', err);
+          setProfilePicture(null);
+        }
+      } else {
+        setProfilePicture(null);
+      }
+    };
+
+    fetchProfilePicture();
+  }, [auth.token]);
 
   const toggleDarkMode = () => {
     if (darkMode) {
@@ -119,12 +144,20 @@ export default function Navbar() {
                 <span>Logout</span>
               </button>
               <Link to="/profile">
-                <Avatar 
-                  name={auth.user.username || 'User'} 
-                  size="30" 
-                  round={true} 
-                  className="ml-2"  
-                />
+                {profilePicture ? (
+                  <img 
+                    src={profilePicture} 
+                    alt="Profile" 
+                    className="w-8 h-8 rounded-full ml-2 object-cover" 
+                  />
+                ) : (
+                  <Avatar 
+                    name={auth.user.username || 'User'} 
+                    size="30" 
+                    round={true} 
+                    className="ml-2" 
+                  />
+                )}
               </Link>
               {/* Dark Mode Toggle */}
               <button
@@ -251,12 +284,20 @@ export default function Navbar() {
                     <span>Logout</span>
                   </button>
                   <Link to="/profile" className="mt-2">
-                    <Avatar 
-                      name={auth.user.username || 'User'} 
-                      size="30" 
-                      round={true} 
-                      className="mx-auto" 
-                    />
+                    {profilePicture ? (
+                      <img 
+                        src={profilePicture} 
+                        alt="Profile" 
+                        className="w-8 h-8 rounded-full mx-auto object-cover" 
+                      />
+                    ) : (
+                      <Avatar 
+                        name={auth.user.username || 'User'} 
+                        size="30" 
+                        round={true} 
+                        className="mx-auto" 
+                      />
+                    )}
                   </Link>
                   {/* Dark Mode Toggle */}
                   <button

@@ -93,6 +93,7 @@ export default function PostCard({ post, onLike, onDelete }) {
         headers: { Authorization: `Bearer ${auth.token}` },
       });
       onDelete(post.id);
+      toast.success('Post deleted successfully.');
     } catch (err) {
       toast.error(err.response?.data?.message || 'Error deleting post');
     }
@@ -102,12 +103,21 @@ export default function PostCard({ post, onLike, onDelete }) {
     <div className="border rounded p-4 mb-4 bg-white dark:bg-gray-700 shadow hover:shadow-xl transition-shadow duration-300">
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-2">
-          <Avatar 
-            name={post.username || 'User'} 
-            size="40" 
-            round={true} 
-            className="mr-2" 
-          />
+          {/* Display Profile Picture or Avatar */}
+          {post.profile_picture ? (
+            <img
+              src={post.profile_picture}
+              alt={`${post.username}'s profile`}
+              className="w-10 h-10 rounded-full object-cover"
+            />
+          ) : (
+            <Avatar
+              name={post.username || 'User'}
+              size="40"
+              round={true}
+              className="mr-2"
+            />
+          )}
           <h3 className="font-bold text-lg">@{post.username || 'User'}</h3>
         </div>
         {canEdit && (

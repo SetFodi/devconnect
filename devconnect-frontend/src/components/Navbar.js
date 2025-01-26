@@ -3,15 +3,16 @@
 import React, { useContext, useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
+import { ThemeContext } from '../context/ThemeContext'; // Correctly import ThemeContext as named import
 import Avatar from 'react-avatar';
-import { FaSun, FaMoon } from 'react-icons/fa';
+import { FaSun, FaMoon, FaTools } from 'react-icons/fa'; // Import FaTools for admin
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
 
 export default function Navbar() {
   const { auth, logout } = useContext(AuthContext);
+  const { darkMode, toggleDarkMode } = useContext(ThemeContext); // Access ThemeContext
   const [menuOpen, setMenuOpen] = useState(false);
-  const [darkMode, setDarkMode] = useState(false);
   const [profilePicture, setProfilePicture] = useState(null);
   const location = useLocation(); // To determine active link
 
@@ -21,15 +22,6 @@ export default function Navbar() {
   }, [location]);
 
   useEffect(() => {
-    // Check local storage for theme preference
-    if (localStorage.getItem('theme') === 'dark') {
-      setDarkMode(true);
-      document.documentElement.classList.add('dark');
-    } else {
-      setDarkMode(false);
-      document.documentElement.classList.remove('dark');
-    }
-
     // Fetch profile picture if authenticated
     const fetchProfilePicture = async () => {
       if (auth.token) {
@@ -53,18 +45,6 @@ export default function Navbar() {
 
     fetchProfilePicture();
   }, [auth.token]);
-
-  const toggleDarkMode = () => {
-    if (darkMode) {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
-      setDarkMode(false);
-    } else {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
-      setDarkMode(true);
-    }
-  };
 
   // Animation variants for mobile menu
   const menuVariants = {
@@ -109,8 +89,24 @@ export default function Navbar() {
           >
             Developers
           </Link>
+
           {auth.token ? (
             <>
+              {/* Admin Link (Visible Only to Admins) */}
+              {auth.user.role === 'admin' && (
+                <Link 
+                  to="/admin" 
+                  className={`px-3 py-2 rounded transition-colors duration-300 flex items-center space-x-1 ${
+                    isActive('/admin')
+                      ? 'bg-blue-600 dark:bg-gray-700'
+                      : 'hover:bg-blue-600 dark:hover:bg-gray-700'
+                  }`}
+                >
+                  <FaTools />
+                  <span>Admin</span>
+                </Link>
+              )}
+
               <Link 
                 to="/profile" 
                 className={`px-3 py-2 rounded transition-colors duration-300 ${
@@ -247,6 +243,22 @@ export default function Navbar() {
               >
                 Developers
               </Link>
+              
+              {auth.token && auth.user.role === 'admin' && (
+                <Link 
+                  to="/admin" 
+                  className={`px-3 py-2 rounded transition-colors duration-300 flex items-center space-x-1 ${
+                    isActive('/admin')
+                      ? 'bg-blue-600 dark:bg-gray-700'
+                      : 'hover:bg-blue-600 dark:hover:bg-gray-700'
+                  }`}
+                  onClick={() => setMenuOpen(false)}
+                >
+                  <FaTools />
+                  <span>Admin</span>
+                </Link>
+              )}
+
               {auth.token ? (
                 <>
                   <Link 

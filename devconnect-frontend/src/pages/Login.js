@@ -1,6 +1,6 @@
 // frontend/src/pages/Login.js
+
 import React, { useState, useContext } from 'react';
-import axios from 'axios';
 import { AuthContext } from '../context/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
 import { FaEnvelope, FaLock } from 'react-icons/fa';
@@ -34,17 +34,19 @@ export default function Login() {
 
     try {
       setErrors({});
-      const res = await axios.post('http://localhost:5000/api/auth/login', formData);
-      toast.success('Logged in successfully!');
-      login(res.data.token, res.data.user);
-      navigate('/');
+      const result = await login(formData.email, formData.password);
+      if (result.success) {
+        toast.success('Logged in successfully!');
+        navigate('/');
+      } else {
+        toast.error(result.message);
+        if (result.message.includes('Invalid credentials')) {
+          setErrors({ email: result.message, password: result.message });
+        }
+      }
     } catch (err) {
       console.error(err);
-      const message = err.response?.data?.message || 'Error logging in';
-      toast.error(message);
-      if (message.includes('Invalid credentials')) {
-        setErrors({ email: message, password: message });
-      }
+      toast.error('An unexpected error occurred.');
     }
   };
 

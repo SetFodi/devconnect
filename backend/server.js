@@ -14,9 +14,11 @@ const http = require('http');
 const { Server } = require('socket.io');
 const multer = require('multer');
 const app = express();
+
 app.use(express.json());
 app.use(cors());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
 // 1) Connect to MySQL using Pool
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
@@ -56,26 +58,47 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }, // Limit files to 5MB
   fileFilter: fileFilter
 });
+
 // 2) JWT Auth Middleware
-function authMiddleware(req, res, next) {
+
+async function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader) {
     return res.status(401).json({ message: 'No token provided' });
   }
 
   const token = authHeader.split(' ')[1];
-  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+  jwt.verify(token, process.env.JWT_SECRET, async (err, decoded) => {
     if (err) {
       return res.status(403).json({ message: 'Invalid token' });
     }
-    req.user = decoded; // { userId: ... }
+
+    // Fetch user details to check if banned
+    const [rows] = await pool.query('SELECT is_banned, role FROM users WHERE id = ?', [decoded.userId]);
+    const user = rows[0];
+    if (!user) {
+      return res.status(403).json({ message: 'User not found' });
+    }
+    if (user.is_banned) {
+      return res.status(403).json({ message: 'You have been banned from this platform' });
+    }
+
+    req.user = { userId: decoded.userId, role: user.role };
     next();
   });
+}
+
+function adminMiddleware(req, res, next) {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ message: 'Access denied: Admins only' });
+  }
+  next();
 }
 
 /*******************************************************
  * AUTH ROUTES
  *******************************************************/
+
 /**
  * Register a new user
  * POST /api/auth/register
@@ -127,8 +150,12 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ message: 'Invalid credentials (wrong password)' });
     }
 
-    // Create JWT
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '1d' });
+    // Create JWT including role
+    const token = jwt.sign(
+      { userId: user.id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '1d' }
+    );
 
     res.json({
       message: 'Logged in successfully',
@@ -137,6 +164,7 @@ app.post('/api/auth/login', async (req, res) => {
         id: user.id,
         username: user.username,
         email: user.email,
+        role: user.role, // Include role in response
       },
     });
   } catch (error) {
@@ -148,10 +176,7 @@ app.post('/api/auth/login', async (req, res) => {
 /*******************************************************
  * PROFILE ROUTES
  *******************************************************/
-/**
- * Get current user's profile (JWT-protected)
- * GET /api/profile/me
- */
+
 /**
  * Get current user's profile (JWT-protected)
  * GET /api/profile/me
@@ -170,11 +195,77 @@ app.get('/api/profile/me', authMiddleware, async (req, res) => {
   }
 });
 
+/* admin routes and privileges */
+
+/**
+ * Ban a User
+ * POST /api/admin/users/:id/ban
+ */
+app.post('/api/admin/users/:id/ban', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const userId = req.params.id;
+    await pool.query('UPDATE users SET is_banned = TRUE WHERE id = ?', [userId]);
+    res.json({ message: 'User banned successfully' });
+  } catch (error) {
+    console.error('Ban user error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
+ * Unban a User
+ * POST /api/admin/users/:id/unban
+ */
+app.post('/api/admin/users/:id/unban', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const userId = req.params.id;
+    await pool.query('UPDATE users SET is_banned = FALSE WHERE id = ?', [userId]);
+    res.json({ message: 'User unbanned successfully' });
+  } catch (error) {
+    console.error('Unban user error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
+ * Promote a User to Admin
+ * POST /api/admin/users/:id/promote
+ */
+app.post('/api/admin/users/:id/promote', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const userId = req.params.id;
+    await pool.query('UPDATE users SET role = "admin" WHERE id = ?', [userId]);
+    res.json({ message: 'User promoted to admin successfully' });
+  } catch (error) {
+    console.error('Promote user error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
+ * Demote an Admin to User
+ * POST /api/admin/users/:id/demote
+ */
+app.post('/api/admin/users/:id/demote', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const userId = req.params.id;
+    // Prevent demoting yourself
+    if (userId == req.user.userId) {
+      return res.status(400).json({ message: 'Cannot demote yourself' });
+    }
+    await pool.query('UPDATE users SET role = "user" WHERE id = ?', [userId]);
+    res.json({ message: 'User demoted to regular user successfully' });
+  } catch (error) {
+    console.error('Demote user error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
 
 /**
  * Create or Update profile
  * POST /api/profile
  */
+
 /**
  * Create or Update profile with profile picture
  * POST /api/profile
@@ -212,15 +303,28 @@ app.post('/api/profile', authMiddleware, upload.single('profile_picture'), async
   }
 });
 
+/**
+ * Get All Users (Admin Only)
+ * GET /api/admin/users
+ */
+app.get('/api/admin/users', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT id, username, email, role, is_banned, is_muted
+      FROM users
+      ORDER BY created_at DESC
+    `);
+    res.json(rows);
+  } catch (error) {
+    console.error('Get all users error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
 
 /**
  * Get all profiles (public)
  * GET /api/profile
  */
-// server.js (Search in Profiles)
-
-// server.js
-
 app.get('/api/profile', async (req, res) => {
   try {
     const search = req.query.search || '';
@@ -238,15 +342,10 @@ app.get('/api/profile', async (req, res) => {
   }
 });
 
-
-
 /*******************************************************
  * POSTS & COMMENTS
  *******************************************************/
-/**
- * Create Post
- * POST /api/posts
- */
+
 /**
  * Create Post
  * POST /api/posts
@@ -283,7 +382,6 @@ app.post('/api/posts', authMiddleware, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
-
 
 /**
  * Edit Post
@@ -352,6 +450,43 @@ app.post('/api/posts/:id/like', authMiddleware, async (req, res) => {
   }
 });
 
+app.delete('/api/admin/chat/clear', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM chat_messages');
+    // Notify all connected clients to clear their chat
+    io.emit('chatCleared');
+    res.json({ message: 'Chat cleared successfully' });
+  } catch (error) {
+    console.error('Clear chat error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// server.js
+
+/**
+ * Delete Specific Chat Message
+ * DELETE /api/admin/chat/message/:id
+ */
+app.delete('/api/admin/chat/message/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const messageId = req.params.id;
+    // Check if message exists
+    const [rows] = await pool.query('SELECT * FROM chat_messages WHERE id = ?', [messageId]);
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'Message not found' });
+    }
+    // Delete the message
+    await pool.query('DELETE FROM chat_messages WHERE id = ?', [messageId]);
+    // Notify all clients to remove the message
+    io.emit('chatMessageDeleted', { id: messageId });
+    res.json({ message: 'Message deleted successfully' });
+  } catch (error) {
+    console.error('Delete message error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 /**
  * Unlike Post
  * DELETE /api/posts/:id/like
@@ -386,8 +521,6 @@ app.delete('/api/posts/:id/like', authMiddleware, async (req, res) => {
  * Get all posts
  * GET /api/posts
  */
-// server.js (Partial)
-
 // server.js (Partial Corrections)
 
 app.get('/api/posts', async (req, res) => {
@@ -420,7 +553,6 @@ app.get('/api/posts', async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
-
 
 app.get('/api/posts/me', authMiddleware, async (req, res) => {
   try {
@@ -456,8 +588,6 @@ app.get('/api/posts/me', authMiddleware, async (req, res) => {
   }
 });
 
-
-
 /**
  * Delete a post (must be the owner)
  * DELETE /api/posts/:id
@@ -484,7 +614,6 @@ app.delete('/api/posts/:id', authMiddleware, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
-
 
 /**
  * Create a comment
@@ -540,76 +669,139 @@ const io = new Server(httpServer, {
   }
 });
 
-
 io.on('connection', async (socket) => {
   console.log('A user connected:', socket.id);
-
-  // 1) Send existing chat history to the *newly connected* client
-  try {
-    // Fetch chat messages along with user profile pictures
-    const [rows] = await pool.query(`
-      SELECT cm.*, u.username, p.profile_picture
-      FROM chat_messages cm
-      JOIN users u ON cm.user = u.username
-      LEFT JOIN profiles p ON u.id = p.user_id
-      ORDER BY cm.created_at ASC
-    `);
-    socket.emit('chatHistory', rows);
-  } catch (err) {
-    console.error('Error fetching chat history:', err);
+  const token = socket.handshake.auth.token;
+  if (!token) {
+    socket.emit('error', 'No token provided');
+    socket.disconnect();
+    return;
   }
 
-  // 2) Listen for new messages
-  socket.on('chatMessage', async (msg) => {
+  // Verify token
+  jwt.verify(token, process.env.JWT_SECRET, async (err, decoded) => {
+    if (err) {
+      socket.emit('error', 'Invalid token');
+      socket.disconnect();
+      return;
+    }
     try {
-      // Validate and sanitize the incoming message
-      const { user, text, time } = msg;
-      
-      // Fetch the user's profile picture
-      const [userRows] = await pool.query(`
-        SELECT p.profile_picture
-        FROM users u
-        JOIN profiles p ON u.id = p.user_id
-        WHERE u.username = ?
-        LIMIT 1
-      `, [user]);
-
-      let profilePicture = null;
-      if (userRows.length > 0) {
-        profilePicture = userRows[0].profile_picture;
+      // Fetch user details
+      const [rows] = await pool.query('SELECT username, is_banned, role FROM users WHERE id = ?', [decoded.userId]);
+      const user = rows[0];
+      if (!user) {
+        socket.emit('error', 'User not found');
+        socket.disconnect();
+        return;
+      }
+      if (user.is_banned) {
+        socket.emit('error', 'You have been banned from this platform');
+        socket.disconnect();
+        return;
       }
 
-      // Insert the new message into 'chat_messages'
-      await pool.query(
-        'INSERT INTO chat_messages (user, text, time) VALUES (?, ?, ?)',
-        [user, text, time]
-      );
+      // Attach user info to socket
+      socket.user = { id: decoded.userId, role: user.role, username: user.username };
 
-      // Prepare the message object with profile_picture
-      const messageWithPicture = {
-        user,
-        text,
-        time,
-        profile_picture: profilePicture, // Can be null if not set
-      };
+      // Send existing chat history to the newly connected client
+      try {
+        // Fetch chat messages along with user profile pictures
+        const [chatRows] = await pool.query(`
+          SELECT cm.*, u.username, p.profile_picture
+          FROM chat_messages cm
+          JOIN users u ON cm.user = u.username
+          LEFT JOIN profiles p ON u.id = p.user_id
+          ORDER BY cm.created_at ASC
+        `);
+        socket.emit('chatHistory', chatRows);
+      } catch (err) {
+        console.error('Error fetching chat history:', err);
+      }
 
-      // Broadcast to everyone
-      io.emit('chatMessage', messageWithPicture);
-    } catch (err) {
-      console.error('Error inserting chat message:', err);
+      // Handle chatMessage
+      socket.on('chatMessage', async (msg) => {
+        if (!socket.user) return;
+
+        try {
+          // Fetch the user's profile picture
+          const [userRows] = await pool.query(`
+            SELECT p.profile_picture
+            FROM users u
+            JOIN profiles p ON u.id = p.user_id
+            WHERE u.id = ?
+            LIMIT 1
+          `, [socket.user.id]);
+
+          let profilePicture = null;
+          if (userRows.length > 0) {
+            profilePicture = userRows[0].profile_picture;
+          }
+
+          // Check if the user is muted
+          const [muteRows] = await pool.query('SELECT is_muted FROM users WHERE id = ?', [socket.user.id]);
+          if (muteRows[0].is_muted) {
+            socket.emit('error', 'You are muted and cannot send messages');
+            return;
+          }
+
+          // Insert the new message into 'chat_messages'
+          const [result] = await pool.query(
+            'INSERT INTO chat_messages (user, text, time) VALUES (?, ?, ?)',
+            [socket.user.username, msg.text, msg.time]
+          );
+
+          // Prepare the message object with profile_picture
+          const messageWithPicture = {
+            id: result.insertId,
+            user: socket.user.username,
+            text: msg.text,
+            time: msg.time,
+            profile_picture: profilePicture, // Can be null if not set
+          };
+
+          // Broadcast to everyone
+          io.emit('chatMessage', messageWithPicture);
+        } catch (err) {
+          console.error('Error inserting chat message:', err);
+        }
+      });
+
+      // Listen for "typing"
+      socket.on('typing', (username) => {
+        socket.broadcast.emit('userTyping', username);
+      });
+
+      // Handle clearChat
+      socket.on('clearChat', () => {
+        if (socket.user.role !== 'admin') {
+          socket.emit('error', 'Access denied: Admins only');
+          return;
+        }
+
+        // Clear chat messages in the database
+        pool.query('DELETE FROM chat_messages')
+          .then(() => {
+            // Notify all clients to clear their chat
+            io.emit('chatCleared');
+            // Optionally, log this action
+            console.log(`Chat cleared by admin user ID: ${socket.user.id}`);
+          })
+          .catch((err) => {
+            console.error('Error clearing chat via Socket.io:', err);
+            socket.emit('error', 'Failed to clear chat');
+          });
+      });
+    } catch (error) {
+      console.error('Error fetching user details:', error);
+      socket.emit('error', 'Server error');
+      socket.disconnect();
     }
-  });
-
-  // Listen for "typing"
-  socket.on('typing', (username) => {
-    socket.broadcast.emit('userTyping', username);
   });
 
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.id);
   });
 });
-
 
 /*******************************************************
  * START SERVER

@@ -3,6 +3,7 @@
 import React, { useContext } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthContext, AuthProvider } from './context/AuthContext';
+import { SocketProvider } from './context/SocketContext';
 import { ThemeProvider } from './context/ThemeContext'; // Correctly import ThemeProvider as named import
 import Navbar from './components/Navbar';
 import Feed from './pages/Feed';
@@ -65,9 +66,11 @@ function App() {
 export default function WrappedApp() {
   return (
     <AuthProvider>
+      <SocketProvider> {/* Wrap with SocketProvider */}
       <ThemeProvider> {/* Wrap with ThemeProvider */}
         <App />
       </ThemeProvider>
+      </SocketProvider>
     </AuthProvider>
   );
 }

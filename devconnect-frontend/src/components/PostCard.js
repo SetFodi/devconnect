@@ -5,7 +5,7 @@ import { SocketContext } from '../context/SocketContext';
 import { toast } from 'react-toastify';
 import Avatar from 'react-avatar';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FaImage, FaTimes, FaComment } from 'react-icons/fa';
+import { FaImage, FaVideo, FaTimes, FaComment } from 'react-icons/fa';
 
 export default function PostCard({ post, onLike, onDelete }) {
   const { auth } = useContext(AuthContext);
@@ -14,6 +14,8 @@ export default function PostCard({ post, onLike, onDelete }) {
   const [editContent, setEditContent] = useState(post.content);
   const [newImage, setNewImage] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
+  const [newVideo, setNewVideo] = useState(null);
+  const [videoPreviewUrl, setVideoPreviewUrl] = useState(null);
   
   // Comment states
   const [showComments, setShowComments] = useState(false);
@@ -29,6 +31,7 @@ export default function PostCard({ post, onLike, onDelete }) {
     if (showComments) {
       fetchComments();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showComments, post.id]);
 
   // Socket event listeners for comments
@@ -70,89 +73,90 @@ export default function PostCard({ post, onLike, onDelete }) {
         socket.off('commentDeleted');
       };
     }
-  }, [socket, post.id, showComments]); // Add showComments to dependencies
-// In PostCard.js, update the handleComment and deleteComment functions:
+  }, [socket, post.id, showComments]);
 
-const handleComment = async () => {
-  if (!auth.token) {
-    toast.error('You must be logged in to comment');
-    return;
-  }
-
-  if (!newComment.trim()) {
-    toast.warning('Comment cannot be empty');
-    return;
-  }
-
-  try {
-    const res = await axios.post(
-      'http://localhost:5000/api/comments',
-      { postId: post.id, content: newComment },
-      { headers: { Authorization: `Bearer ${auth.token}` } }
-    );
-
-    // Add the new comment to the local state immediately
-    const newCommentData = res.data.comment;
-    
-    // Always update comment count
-    setCommentCount(res.data.total);
-    
-    // Update comments array if section is open
-    if (showComments) {
-      setComments(prev => {
-        if (!prev.some(c => c.id === newCommentData.id)) {
-          return [newCommentData, ...prev];
-        }
-        return prev;
-      });
+  // Handle adding a new comment
+  const handleComment = async () => {
+    if (!auth.token) {
+      toast.error('You must be logged in to comment');
+      return;
     }
 
-    // Emit socket event immediately after successful comment creation
-    if (socket) {
-      socket.emit('newComment', {
-        postId: post.id,
-        comment: res.data.comment,
-        total: res.data.total
-      });
+    if (!newComment.trim()) {
+      toast.warning('Comment cannot be empty');
+      return;
     }
 
-    setNewComment('');
-    toast.success('Comment added!');
-  } catch (err) {
-    toast.error(err.response?.data?.message || 'Error adding comment');
-  }
-};
+    try {
+      const res = await axios.post(
+        'http://localhost:5000/api/comments',
+        { postId: post.id, content: newComment },
+        { headers: { Authorization: `Bearer ${auth.token}` } }
+      );
 
-const deleteComment = async (commentId) => {
-  try {
-    const res = await axios.delete(
-      `http://localhost:5000/api/comments/${commentId}`,
-      { headers: { Authorization: `Bearer ${auth.token}` } }
-    );
-    
-    // Remove comment from local state if comments are showing
-    if (showComments) {
-      setComments(prev => prev.filter(c => c.id !== commentId));
+      // Add the new comment to the local state immediately
+      const newCommentData = res.data.comment;
+      
+      // Always update comment count
+      setCommentCount(res.data.total);
+      
+      // Update comments array if section is open
+      if (showComments) {
+        setComments(prev => {
+          if (!prev.some(c => c.id === newCommentData.id)) {
+            return [newCommentData, ...prev];
+          }
+          return prev;
+        });
+      }
+
+      // Emit socket event immediately after successful comment creation
+      if (socket) {
+        socket.emit('newComment', {
+          postId: post.id,
+          comment: res.data.comment,
+          total: res.data.total
+        });
+      }
+
+      setNewComment('');
+      toast.success('Comment added!');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Error adding comment');
     }
-    
-    // Emit socket event with postId and updated total
-    if (socket) {
-      socket.emit('deleteComment', {
-        postId: post.id,
-        commentId,
-        total: Number(commentCount) - 1
-      });
+  };
+
+  // Handle deleting a comment
+  const deleteComment = async (commentId) => {
+    try {
+      await axios.delete(
+        `http://localhost:5000/api/comments/${commentId}`,
+        { headers: { Authorization: `Bearer ${auth.token}` } }
+      );
+      
+      // Remove comment from local state if comments are showing
+      if (showComments) {
+        setComments(prev => prev.filter(c => c.id !== commentId));
+      }
+      
+      // Emit socket event with postId and updated total
+      if (socket) {
+        socket.emit('deleteComment', {
+          postId: post.id,
+          commentId,
+          total: Number(commentCount) - 1
+        });
+      }
+      
+      // Update local count
+      setCommentCount(prev => prev - 1);
+      toast.success('Comment deleted');
+    } catch (err) {
+      toast.error('Error deleting comment');
     }
+  };
     
-    // Update local count
-    setCommentCount(prev => prev - 1);
-    toast.success('Comment deleted');
-  } catch (err) {
-    toast.error('Error deleting comment');
-  }
-};
-  
-  // Update the fetchComments function to include a check for open state
+  // Fetch comments from the backend
   const fetchComments = async () => {
     if (!showComments) return; // Don't fetch if comments aren't shown
     
@@ -168,10 +172,11 @@ const deleteComment = async (commentId) => {
     }
   };
 
+  // Handle image file selection
   const handleImageChange = (e) => {
     const file = e.target.files[0];
     if (file) {
-      if (file.size > 5 * 1024 * 1024) {
+      if (file.size > 5 * 1024 * 1024) { // 5MB limit for images
         toast.error('Image must be less than 5MB');
         return;
       }
@@ -184,11 +189,13 @@ const deleteComment = async (commentId) => {
     }
   };
 
+  // Remove selected image
   const removeImage = () => {
     setNewImage(null);
     setPreviewUrl(null);
   };
 
+  // Handle like/unlike functionality
   const toggleLike = async () => {
     if (!auth.token) {
       toast.error('You must be logged in to like/unlike');
@@ -234,18 +241,45 @@ const deleteComment = async (commentId) => {
     }
   };
 
+  // Handle video file selection
+  const handleVideoChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      if (file.size > 50 * 1024 * 1024) { // 50MB limit for videos
+        toast.error('Video must be less than 50MB');
+        return;
+      }
+      if (!file.type.startsWith('video/')) {
+        toast.error('Only video files are allowed');
+        return;
+      }
+      setNewVideo(file);
+      setVideoPreviewUrl(URL.createObjectURL(file));
+    }
+  };
+  
+  // Remove selected video
+  const removeVideo = () => {
+    setNewVideo(null);
+    setVideoPreviewUrl(null);
+  };
+
+  // Handle editing a post
   const handleEdit = async () => {
     if (!auth.token) {
       toast.error('You must be logged in to edit');
       return;
     }
-
+  
     const formData = new FormData();
     formData.append('content', editContent);
     if (newImage) {
       formData.append('image', newImage);
     }
-
+    if (newVideo) {
+      formData.append('video', newVideo);
+    }
+  
     try {
       await axios.put(
         `http://localhost:5000/api/posts/${post.id}`,
@@ -262,14 +296,16 @@ const deleteComment = async (commentId) => {
       onLike({ 
         ...post, 
         content: editContent,
-        image_url: previewUrl || post.image_url 
+        image_url: previewUrl || post.image_url,
+        video_url: videoPreviewUrl || post.video_url // Update video_url
       });
-
+  
       // Emit socket event for post update
       socket.emit('postUpdated', {
         postId: post.id,
         content: editContent,
         image_url: previewUrl || post.image_url,
+        video_url: videoPreviewUrl || post.video_url, // Include video_url
       });
     } catch (err) {
       toast.error(err.response?.data?.message || 'Error editing post');
@@ -282,6 +318,7 @@ const deleteComment = async (commentId) => {
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
     >
+      {/* Header: User Info and Edit/Delete Buttons */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center space-x-2">
           {post.profile_picture ? (
@@ -329,8 +366,10 @@ const deleteComment = async (commentId) => {
         )}
       </div>
 
+      {/* Post Content: Display or Edit Mode */}
       {isEditing ? (
         <div className="space-y-4">
+          {/* Content Textarea */}
           <textarea
             className="border border-gray-300 dark:border-gray-600 w-full p-2 rounded bg-gray-100 dark:bg-gray-600 text-gray-800 dark:text-gray-200"
             rows="3"
@@ -339,7 +378,9 @@ const deleteComment = async (commentId) => {
             aria-label="Edit Post Content"
           />
           
+          {/* Image and Video Upload Buttons */}
           <div className="flex items-center space-x-4">
+            {/* Image Upload */}
             <label className="cursor-pointer flex items-center space-x-2 bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 transition-colors">
               <FaImage />
               <span>Change Image</span>
@@ -350,6 +391,18 @@ const deleteComment = async (commentId) => {
                 onChange={handleImageChange}
               />
             </label>
+            {/* Video Upload */}
+            <label className="cursor-pointer flex items-center space-x-2 bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600 transition-colors">
+              <FaVideo />
+              <span>Change Video</span>
+              <input
+                type="file"
+                className="hidden"
+                accept="video/*"
+                onChange={handleVideoChange}
+              />
+            </label>
+            {/* Remove Image Button */}
             {(previewUrl || post.image_url) && (
               <button
                 onClick={removeImage}
@@ -360,11 +413,25 @@ const deleteComment = async (commentId) => {
                 <span>Remove Image</span>
               </button>
             )}
+            {/* Remove Video Button */}
+            {(videoPreviewUrl || post.video_url) && (
+              <button
+                onClick={removeVideo}
+                className="flex items-center space-x-2 bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 transition-colors"
+                aria-label="Remove Video"
+              >
+                <FaTimes />
+                <span>Remove Video</span>
+              </button>
+            )}
           </div>
         </div>
       ) : (
         <>
+          {/* Post Text Content */}
           <p className="mb-4 text-gray-800 dark:text-gray-200">{post.content}</p>
+          
+          {/* Post Image */}
           {post.image_url && (
             <div className="mb-4">
               <img
@@ -375,22 +442,55 @@ const deleteComment = async (commentId) => {
               />
             </div>
           )}
+          
+          {/* Post Video */}
+          {post.video_url && (
+            <div className="mb-4">
+              <video
+                src={post.video_url}
+                controls
+                className="rounded-lg max-h-96 w-full mx-auto"
+                preload="metadata"
+              >
+                Your browser does not support the video tag.
+              </video>
+            </div>
+          )}
         </>
       )}
 
-      {isEditing && (previewUrl || post.image_url) && (
+      {/* Preview Section for Editing */}
+      {isEditing && (previewUrl || post.image_url || videoPreviewUrl || post.video_url) && (
         <div className="mt-4">
-          <img
-            src={previewUrl || post.image_url}
-            alt="Preview"
-            className="rounded-lg max-h-96 w-auto mx-auto"
-          />
+          {/* Image Preview */}
+          {(previewUrl || post.image_url) && (
+            <img
+              src={previewUrl || post.image_url}
+              alt="Preview"
+              className="rounded-lg max-h-96 w-full mx-auto mb-4"
+            />
+          )}
+          {/* Video Preview */}
+          {(videoPreviewUrl || post.video_url) && (
+            <video
+              src={videoPreviewUrl || post.video_url}
+              controls
+              className="rounded-lg max-h-96 w-full mx-auto"
+            >
+              Your browser does not support the video tag.
+            </video>
+          )}
         </div>
       )}
 
+      {/* Footer: Timestamp and Action Buttons */}
       <div className="mt-4 flex items-center justify-between text-sm text-gray-500 dark:text-gray-400">
+        {/* Timestamp */}
         <span>{new Date(post.created_at).toLocaleString()}</span>
+        
+        {/* Like and Comment Buttons */}
         <div className="flex items-center space-x-4">
+          {/* Like Button */}
           <button
             onClick={toggleLike}
             className={`flex items-center space-x-2 px-3 py-1 rounded transition-colors ${
@@ -404,6 +504,7 @@ const deleteComment = async (commentId) => {
             <span>{post.likeCount}</span>
           </button>
 
+          {/* Comment Toggle Button */}
           <button
             onClick={() => setShowComments(!showComments)}
             className="flex items-center space-x-2 px-3 py-1 rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 transition-colors"
@@ -415,14 +516,16 @@ const deleteComment = async (commentId) => {
         </div>
       </div>
 
+      {/* Comments Section */}
       <AnimatePresence>
         {showComments && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
-            className="mt-4 border-t pt-4"
+            className="mt-4 border-t pt-4 overflow-hidden"
           >
+            {/* New Comment Input */}
             <div className="flex gap-2 mb-4">
               <input
                 type="text"
@@ -442,6 +545,7 @@ const deleteComment = async (commentId) => {
               </button>
             </div>
 
+            {/* Loading Indicator */}
             {loadingComments ? (
               <div className="text-center py-4">Loading comments...</div>
             ) : (
@@ -453,6 +557,7 @@ const deleteComment = async (commentId) => {
                     animate={{ opacity: 1 }}
                     className="flex items-start space-x-3"
                   >
+                    {/* Commenter's Avatar */}
                     {comment.profile_picture ? (
                       <img
                         src={comment.profile_picture}
@@ -466,9 +571,11 @@ const deleteComment = async (commentId) => {
                         round={true}
                       />
                     )}
+                    {/* Comment Content */}
                     <div className="flex-1 bg-gray-100 dark:bg-gray-600 rounded-lg p-3">
                       <div className="flex justify-between items-start">
                         <span className="font-semibold">@{comment.username}</span>
+                        {/* Delete Comment Button (if authorized) */}
                         {(comment.user_id === auth.user?.id || post.user_id === auth.user?.id) && (
                           <button
                             onClick={() => deleteComment(comment.id)}

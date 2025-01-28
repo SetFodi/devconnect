@@ -10,13 +10,15 @@ import ClipLoader from 'react-spinners/ClipLoader';
 import InfiniteScroll from 'react-infinite-scroll-component';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link } from 'react-router-dom';
-import { FaImage, FaTimes } from 'react-icons/fa';
+import { FaImage, FaVideo, FaTimes } from 'react-icons/fa'; // Import FaVideo
 
 export default function Feed() {
   const [posts, setPosts] = useState([]);
   const [newPost, setNewPost] = useState('');
   const [postImage, setPostImage] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
+  const [postVideo, setPostVideo] = useState(null);
+  const [videoPreview, setVideoPreview] = useState(null);
   const { auth } = useContext(AuthContext);
   const socket = useContext(SocketContext); // Use centralized socket
   const [loading, setLoading] = useState(false);
@@ -29,30 +31,33 @@ export default function Feed() {
       // Join feed room for real-time updates
       socket.emit('joinFeed');
 
-// Listen for new posts
-socket.on('postCreated', (newPost) => {
-  setPosts((prevPosts) => [newPost, ...prevPosts]);
-  toast.success('New post created!');
-});
-socket.on('commentAdded', ({ postId, total }) => {
-  setPosts(prevPosts => 
-    prevPosts.map(post => 
-      post.id === postId 
-        ? { ...post, commentCount: total }
-        : post
-    )
-  );
-});
+      // Listen for new posts
+      socket.on('postCreated', (newPost) => {
+        setPosts((prevPosts) => [newPost, ...prevPosts]);
+        toast.success('New post created!');
+      });
 
-socket.on('commentDeleted', ({ postId, total }) => {
-  setPosts(prevPosts => 
-    prevPosts.map(post => 
-      post.id === postId 
-        ? { ...post, commentCount: total }
-        : post
-    )
-  );
-});
+      // Listen for comment additions and deletions to update comment counts
+      socket.on('commentAdded', ({ postId, total }) => {
+        setPosts(prevPosts => 
+          prevPosts.map(post => 
+            post.id === postId 
+              ? { ...post, commentCount: total }
+              : post
+          )
+        );
+      });
+
+      socket.on('commentDeleted', ({ postId, total }) => {
+        setPosts(prevPosts => 
+          prevPosts.map(post => 
+            post.id === postId 
+              ? { ...post, commentCount: total }
+              : post
+          )
+        );
+      });
+
       // Listen for post likes
       socket.on('postLikeUpdated', ({ postId, userId, action, likeCount }) => {
         setPosts((prevPosts) =>
@@ -80,11 +85,11 @@ socket.on('commentDeleted', ({ postId, total }) => {
       });
 
       // Listen for post updates
-      socket.on('postUpdated', ({ postId, content, image_url }) => {
+      socket.on('postUpdated', ({ postId, content, image_url, video_url }) => {
         setPosts((prevPosts) =>
           prevPosts.map((post) => {
             if (post.id === postId) {
-              return { ...post, content, image_url };
+              return { ...post, content, image_url, video_url };
             }
             return post;
           })
@@ -94,11 +99,11 @@ socket.on('commentDeleted', ({ postId, total }) => {
       // Cleanup event listeners on unmount
       return () => {
         socket.off('postCreated');
+        socket.off('commentAdded');
+        socket.off('commentDeleted');
         socket.off('postLikeUpdated');
         socket.off('postDeleted');
         socket.off('postUpdated');
-        socket.off('commentAdded');
-        socket.off('commentDeleted');
       };
     }
   }, [socket, auth.user?.id]);
@@ -109,10 +114,11 @@ socket.on('commentDeleted', ({ postId, total }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.token]);
 
+  // Handle Image Selection
   const handleImageSelect = (e) => {
     const file = e.target.files[0];
     if (file) {
-      if (file.size > 5 * 1024 * 1024) {
+      if (file.size > 5 * 1024 * 1024) { // 5MB limit for images
         toast.error('Image must be less than 5MB');
         return;
       }
@@ -125,14 +131,39 @@ socket.on('commentDeleted', ({ postId, total }) => {
     }
   };
 
+  // Handle Video Selection
+  const handleVideoSelect = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      if (file.size > 50 * 1024 * 1024) { // 50MB limit for videos
+        toast.error('Video must be less than 50MB');
+        return;
+      }
+      if (!file.type.startsWith('video/')) {
+        toast.error('Only video files are allowed');
+        return;
+      }
+      setPostVideo(file);
+      setVideoPreview(URL.createObjectURL(file));
+    }
+  };
+  
+  // Remove Selected Image
   const removeImage = () => {
     setPostImage(null);
     setImagePreview(null);
   };
 
+  // Remove Selected Video
+  const removeVideo = () => {
+    setPostVideo(null);
+    setVideoPreview(null);
+  };
+
+  // Handle Post Creation (including images and videos)
   const handleCreatePost = async () => {
-    if (!newPost.trim() && !postImage) {
-      toast.warning('Post must have either text content or an image.');
+    if (!newPost.trim() && !postImage && !postVideo) {
+      toast.warning('Post must have either text content, an image, or a video.');
       return;
     }
 
@@ -142,12 +173,13 @@ socket.on('commentDeleted', ({ postId, total }) => {
       if (postImage) {
         formData.append('image', postImage);
       }
-  
+      if (postVideo) {
+        formData.append('video', postVideo);
+      }
 
       const res = await axios.post(
         'http://localhost:5000/api/posts',
         formData,
-  
         {
           headers: {
             Authorization: `Bearer ${auth.token}`,
@@ -155,19 +187,24 @@ socket.on('commentDeleted', ({ postId, total }) => {
           },
         }
       );
-  
+
+      // Emit socket event for the new post
       socket.emit('newPost', res.data.post);
       // No need to manually add the post; Socket.io will handle it
 
+      // Reset form states
       setNewPost('');
       setPostImage(null);
       setImagePreview(null);
+      setPostVideo(null);
+      setVideoPreview(null);
       toast.success('Post created successfully!');
     } catch (err) {
       toast.error(err.response?.data?.message || 'Error creating post.');
     }
   };
 
+  // Fetch Posts from Backend
   const fetchPosts = async (currentPage = 1) => {
     setLoading(true);
     try {
@@ -200,18 +237,21 @@ socket.on('commentDeleted', ({ postId, total }) => {
     }
   };
 
+  // Fetch More Data for Infinite Scroll
   const fetchMoreData = () => {
     const nextPage = page + 1;
     fetchPosts(nextPage);
     setPage(nextPage);
   };
 
+  // Handle Like/Unlike Actions
   const handleLike = (updatedPost) => {
     setPosts((prevPosts) =>
       prevPosts.map((post) => (post.id === updatedPost.id ? updatedPost : post))
     );
   };
 
+  // Handle Post Deletion
   const handleDelete = async (deletedPostId) => {
     try {
       await axios.delete(`http://localhost:5000/api/posts/${deletedPostId}`, {
@@ -229,6 +269,7 @@ socket.on('commentDeleted', ({ postId, total }) => {
     }
   };
 
+  // Render Login/Register Prompt if Not Authenticated
   if (!auth.token) {
     return (
       <div className="flex flex-col justify-center items-center min-h-screen bg-gray-100 dark:bg-gray-900 px-4">
@@ -264,12 +305,14 @@ socket.on('commentDeleted', ({ postId, total }) => {
         Developer Feed
       </h1>
 
+      {/* New Post Creation Section */}
       {auth.token && (
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
           className="mb-6 bg-white dark:bg-gray-700 p-4 rounded shadow"
         >
+          {/* Post Content Textarea */}
           <textarea
             className="border border-gray-300 dark:border-gray-600 rounded w-full p-3 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm dark:bg-gray-600 dark:text-gray-200"
             rows="3"
@@ -285,7 +328,9 @@ socket.on('commentDeleted', ({ postId, total }) => {
             }}
           />
 
+          {/* Media Upload Buttons */}
           <div className="mt-2 flex flex-wrap items-center gap-4">
+            {/* Image Upload Button */}
             <label className="cursor-pointer flex items-center space-x-2 bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 transition-colors">
               <FaImage />
               <span>Add Image</span>
@@ -297,6 +342,19 @@ socket.on('commentDeleted', ({ postId, total }) => {
               />
             </label>
 
+            {/* Video Upload Button */}
+            <label className="cursor-pointer flex items-center space-x-2 bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600 transition-colors">
+              <FaVideo />
+              <span>Add Video</span>
+              <input
+                type="file"
+                className="hidden"
+                accept="video/*"
+                onChange={handleVideoSelect}
+              />
+            </label>
+
+            {/* Post Creation Button */}
             <button
               onClick={handleCreatePost}
               className="bg-green-500 text-white px-5 py-2 rounded hover:bg-green-600 transition-all"
@@ -306,6 +364,7 @@ socket.on('commentDeleted', ({ postId, total }) => {
             </button>
           </div>
 
+          {/* Image Preview */}
           {imagePreview && (
             <div className="mt-4 relative">
               <img
@@ -322,9 +381,30 @@ socket.on('commentDeleted', ({ postId, total }) => {
               </button>
             </div>
           )}
+
+          {/* Video Preview */}
+          {videoPreview && (
+            <div className="mt-4 relative">
+              <video
+                src={videoPreview}
+                controls
+                className="max-h-64 rounded-lg w-full"
+              >
+                Your browser does not support the video tag.
+              </video>
+              <button
+                onClick={removeVideo}
+                className="absolute top-2 right-2 bg-red-500 text-white p-2 rounded-full hover:bg-red-600 transition-colors"
+                aria-label="Remove Video"
+              >
+                <FaTimes />
+              </button>
+            </div>
+          )}
         </motion.div>
       )}
 
+      {/* Posts Feed with Infinite Scroll */}
       <InfiniteScroll
         dataLength={posts.length}
         next={fetchMoreData}

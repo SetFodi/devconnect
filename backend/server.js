@@ -29,6 +29,9 @@ const pool = mysql.createPool({
   connectionLimit: 10,
   queueLimit: 0,
 });
+const IMAGE_MIME_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
+const VIDEO_MIME_TYPES = ['video/mp4', 'video/mpeg', 'video/quicktime', 'video/x-msvideo', 'video/x-matroska'];
+
 
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -43,19 +46,16 @@ const storage = multer.diskStorage({
   }
 });
 const fileFilter = (req, file, cb) => {
-  const allowedTypes = /jpeg|jpg|png|gif/;
-  const mimeType = allowedTypes.test(file.mimetype);
-  const extName = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-  if (mimeType && extName) {
+  if (IMAGE_MIME_TYPES.includes(file.mimetype) || VIDEO_MIME_TYPES.includes(file.mimetype)) {
     return cb(null, true);
   }
-  cb(new Error('Only images are allowed'));
+  cb(new Error('Only image and video files are allowed'));
 };
 
 // Initialize Multer with storage and file filter
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // Limit files to 5MB
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB max for videos
   fileFilter: fileFilter
 });
 
@@ -355,23 +355,29 @@ app.get('/api/profile', async (req, res) => {
  * Create Post
  * POST /api/posts
  */
-app.post('/api/posts', authMiddleware, upload.single('image'), async (req, res) => {
+app.post('/api/posts', authMiddleware, upload.fields([{ name: 'image', maxCount: 1 }, { name: 'video', maxCount: 1 }]), async (req, res) => {
   try {
     const userId = req.user.userId;
     const { content } = req.body;
     
-    if (!content) {
-      return res.status(400).json({ message: 'Content is required' });
+    if (!content.trim() && !req.files.image && !req.files.video) {
+      return res.status(400).json({ message: 'Post must have content, an image, or a video' });
     }
 
     let imageUrl = null;
-    if (req.file) {
-      imageUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+    let videoUrl = null;
+
+    if (req.files.image) {
+      imageUrl = `${req.protocol}://${req.get('host')}/uploads/${req.files.image[0].filename}`;
+    }
+
+    if (req.files.video) {
+      videoUrl = `${req.protocol}://${req.get('host')}/uploads/${req.files.video[0].filename}`;
     }
 
     const [result] = await pool.query(
-      'INSERT INTO posts (user_id, content, image_url) VALUES (?, ?, ?)',
-      [userId, content, imageUrl]
+      'INSERT INTO posts (user_id, content, image_url, video_url) VALUES (?, ?, ?, ?)',
+      [userId, content, imageUrl, videoUrl]
     );
     
     // Fetch the created post with additional data
@@ -381,6 +387,7 @@ app.post('/api/posts', authMiddleware, upload.single('image'), async (req, res) 
         p.user_id, 
         p.content,
         p.image_url,
+        p.video_url,
         p.created_at, 
         u.username,
         pr.profile_picture, 
@@ -400,17 +407,15 @@ app.post('/api/posts', authMiddleware, upload.single('image'), async (req, res) 
     res.status(500).json({ message: 'Server error' });
   }
 });
-/**
- * Edit Post
- * PUT /api/posts/:id
- */
-app.put('/api/posts/:id', authMiddleware, upload.single('image'), async (req, res) => {
+
+// Update Edit Post Route
+app.put('/api/posts/:id', authMiddleware, upload.fields([{ name: 'image', maxCount: 1 }, { name: 'video', maxCount: 1 }]), async (req, res) => {
   try {
     const userId = req.user.userId;
     const postId = req.params.id;
     const { content } = req.body;
 
-    if (!content || !content.trim()) {
+    if (!content.trim()) {
       return res.status(400).json({ message: 'Content is required' });
     }
 
@@ -424,14 +429,20 @@ app.put('/api/posts/:id', authMiddleware, upload.single('image'), async (req, re
     }
 
     let imageUrl = rows[0].image_url;
-    if (req.file) {
-      imageUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+    let videoUrl = rows[0].video_url;
+
+    if (req.files.image) {
+      imageUrl = `${req.protocol}://${req.get('host')}/uploads/${req.files.image[0].filename}`;
+    }
+
+    if (req.files.video) {
+      videoUrl = `${req.protocol}://${req.get('host')}/uploads/${req.files.video[0].filename}`;
     }
 
     // Perform update
     await pool.query(
-      'UPDATE posts SET content=?, image_url=? WHERE id=?',
-      [content, imageUrl, postId]
+      'UPDATE posts SET content=?, image_url=?, video_url=? WHERE id=?',
+      [content, imageUrl, videoUrl, postId]
     );
 
     res.json({ message: 'Post updated!' });
@@ -638,19 +649,20 @@ app.get('/api/posts', async (req, res) => {
     const offset = (page - 1) * limit;
 
     const [rows] = await pool.query(`
-SELECT 
-  p.*, 
-  u.username, 
-  pr.profile_picture,
-  p.image_url,
-  (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.id) AS likeCount,
-  (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id) AS commentCount
-FROM posts p
-JOIN users u ON p.user_id = u.id
-LEFT JOIN profiles pr ON p.user_id = pr.user_id
-GROUP BY p.id
-ORDER BY p.created_at DESC
-LIMIT ? OFFSET ?
+      SELECT 
+        p.*, 
+        u.username, 
+        pr.profile_picture,
+        p.image_url,
+        p.video_url,
+        (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.id) AS likeCount,
+        (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id) AS commentCount
+      FROM posts p
+      JOIN users u ON p.user_id = u.id
+      LEFT JOIN profiles pr ON p.user_id = pr.user_id
+      GROUP BY p.id
+      ORDER BY p.created_at DESC
+      LIMIT ? OFFSET ?
     `, [limit, offset]);
 
     res.json(rows);
@@ -660,7 +672,6 @@ LIMIT ? OFFSET ?
   }
 });
 
-
 app.get('/api/posts/me', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -668,26 +679,26 @@ app.get('/api/posts/me', authMiddleware, async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
 
-// In the GET /api/posts/me endpoint, modify the query:
-const [rows] = await pool.query(`
-  SELECT 
-    p.*,
-    u.username,
-    pr.profile_picture,
-    p.image_url,
-    (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.id) AS likeCount,
-    (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id) AS commentCount,
-    CASE WHEN EXISTS (
-      SELECT 1 FROM likes l2 
-      WHERE l2.post_id = p.id AND l2.user_id = ?
-    ) THEN 1 ELSE 0 END AS isLiked
-  FROM posts p
-  JOIN users u ON p.user_id = u.id
-  LEFT JOIN profiles pr ON p.user_id = pr.user_id
-  GROUP BY p.id
-  ORDER BY p.created_at DESC
-  LIMIT ? OFFSET ?
-`, [userId, limit, offset]);
+    const [rows] = await pool.query(`
+      SELECT 
+        p.*,
+        u.username,
+        pr.profile_picture,
+        p.image_url,
+        p.video_url,
+        (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.id) AS likeCount,
+        (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id) AS commentCount,
+        CASE WHEN EXISTS (
+          SELECT 1 FROM likes l2 
+          WHERE l2.post_id = p.id AND l2.user_id = ?
+        ) THEN 1 ELSE 0 END AS isLiked
+      FROM posts p
+      JOIN users u ON p.user_id = u.id
+      LEFT JOIN profiles pr ON p.user_id = pr.user_id
+      GROUP BY p.id
+      ORDER BY p.created_at DESC
+      LIMIT ? OFFSET ?
+    `, [userId, limit, offset]);
 
     res.json(rows);
   } catch (error) {

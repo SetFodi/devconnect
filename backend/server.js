@@ -751,6 +751,7 @@ app.delete('/api/posts/:id', authMiddleware, async (req, res) => {
 
 // server.js (Consistency in POST /api/comments)
 
+// Replace the existing POST /api/comments endpoint with this:
 app.post('/api/comments', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -790,8 +791,8 @@ app.post('/api/comments', authMiddleware, async (req, res) => {
       [postId]
     );
 
-    // Emit commentAdded event to other clients
-    socket.broadcast.emit('commentAdded', {
+    // Use io instead of socket to emit the event to all clients
+    io.emit('commentAdded', {
       postId,
       comment: commentRows[0],
       total: countRows[0].total
@@ -1030,7 +1031,6 @@ socket.on('newComment', async ({ postId, comment }) => {
       [postId]
     );
 
-    // Broadcast to all clients (including the sender)
     io.emit('commentAdded', {
       postId,
       comment,
@@ -1041,14 +1041,17 @@ socket.on('newComment', async ({ postId, comment }) => {
   }
 });
 
+// In your server.js socket connection handler, update the deleteComment event handler
+
 socket.on('deleteComment', async ({ postId, commentId }) => {
   try {
+    // Get updated comment count after deletion
     const [countRows] = await pool.query(
       'SELECT COUNT(*) as total FROM comments WHERE post_id = ?',
       [postId]
     );
 
-    // Broadcast to all clients (including the sender)
+    // Emit to all clients including sender
     io.emit('commentDeleted', {
       postId,
       commentId,

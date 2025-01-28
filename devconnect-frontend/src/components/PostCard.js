@@ -1,18 +1,15 @@
-// frontend/src/components/PostCard.js
-
 import React, { useState, useContext, useEffect } from 'react';
 import axios from 'axios';
 import { AuthContext } from '../context/AuthContext';
-import { SocketContext } from '../context/SocketContext'; // Import SocketContext
+import { SocketContext } from '../context/SocketContext';
 import { toast } from 'react-toastify';
 import Avatar from 'react-avatar';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FaImage, FaTimes, FaComment } from 'react-icons/fa';
 
-
-export default function PostCard({ post, onLike, onDelete, }) {
+export default function PostCard({ post, onLike, onDelete }) {
   const { auth } = useContext(AuthContext);
-  const socket = useContext(SocketContext); // Use centralized socket
+  const socket = useContext(SocketContext);
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(post.content);
   const [newImage, setNewImage] = useState(null);
@@ -27,39 +24,138 @@ export default function PostCard({ post, onLike, onDelete, }) {
   
   const canEdit = Number(post.user_id) === Number(auth.user?.id);
 
-  // No need for additional Socket.io listeners here
-  // All real-time updates are handled by Feed.js
-
   // Fetch comments when comments section is opened
   useEffect(() => {
     if (showComments) {
       fetchComments();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showComments]);
+  }, [showComments, post.id]);
+
+  // Socket event listeners for comments
   useEffect(() => {
     if (socket) {
+      // Listen for new comments
       socket.on('commentAdded', ({ postId, comment, total }) => {
         if (postId === post.id) {
-          setComments(prev => [comment, ...prev]);
+          // Always update the count
           setCommentCount(total);
+          
+          // Only update comments array if section is open
+          if (showComments) {
+            setComments(prev => {
+              if (!prev.some(c => c.id === comment.id)) {
+                return [comment, ...prev];
+              }
+              return prev;
+            });
+          }
         }
       });
-
+  
+      // Listen for deleted comments
       socket.on('commentDeleted', ({ postId, commentId, total }) => {
         if (postId === post.id) {
-          setComments(prev => prev.filter(c => c.id !== commentId));
+          // Always update the count
           setCommentCount(total);
+          
+          // Only update comments array if section is open
+          if (showComments) {
+            setComments(prev => prev.filter(c => c.id !== commentId));
+          }
         }
       });
-
+  
       return () => {
         socket.off('commentAdded');
         socket.off('commentDeleted');
       };
     }
-  }, [socket, post.id]);
+  }, [socket, post.id, showComments]); // Add showComments to dependencies
+// In PostCard.js, update the handleComment and deleteComment functions:
+
+const handleComment = async () => {
+  if (!auth.token) {
+    toast.error('You must be logged in to comment');
+    return;
+  }
+
+  if (!newComment.trim()) {
+    toast.warning('Comment cannot be empty');
+    return;
+  }
+
+  try {
+    const res = await axios.post(
+      'http://localhost:5000/api/comments',
+      { postId: post.id, content: newComment },
+      { headers: { Authorization: `Bearer ${auth.token}` } }
+    );
+
+    // Add the new comment to the local state immediately
+    const newCommentData = res.data.comment;
+    
+    // Always update comment count
+    setCommentCount(res.data.total);
+    
+    // Update comments array if section is open
+    if (showComments) {
+      setComments(prev => {
+        if (!prev.some(c => c.id === newCommentData.id)) {
+          return [newCommentData, ...prev];
+        }
+        return prev;
+      });
+    }
+
+    // Emit socket event immediately after successful comment creation
+    if (socket) {
+      socket.emit('newComment', {
+        postId: post.id,
+        comment: res.data.comment,
+        total: res.data.total
+      });
+    }
+
+    setNewComment('');
+    toast.success('Comment added!');
+  } catch (err) {
+    toast.error(err.response?.data?.message || 'Error adding comment');
+  }
+};
+
+const deleteComment = async (commentId) => {
+  try {
+    const res = await axios.delete(
+      `http://localhost:5000/api/comments/${commentId}`,
+      { headers: { Authorization: `Bearer ${auth.token}` } }
+    );
+    
+    // Remove comment from local state if comments are showing
+    if (showComments) {
+      setComments(prev => prev.filter(c => c.id !== commentId));
+    }
+    
+    // Emit socket event with postId and updated total
+    if (socket) {
+      socket.emit('deleteComment', {
+        postId: post.id,
+        commentId,
+        total: Number(commentCount) - 1
+      });
+    }
+    
+    // Update local count
+    setCommentCount(prev => prev - 1);
+    toast.success('Comment deleted');
+  } catch (err) {
+    toast.error('Error deleting comment');
+  }
+};
+  
+  // Update the fetchComments function to include a check for open state
   const fetchComments = async () => {
+    if (!showComments) return; // Don't fetch if comments aren't shown
+    
     try {
       setLoadingComments(true);
       const res = await axios.get(`http://localhost:5000/api/comments/${post.id}`);
@@ -69,52 +165,6 @@ export default function PostCard({ post, onLike, onDelete, }) {
       toast.error('Error loading comments');
     } finally {
       setLoadingComments(false);
-    }
-  };
-
-  const handleComment = async () => {
-    if (!auth.token) {
-      toast.error('You must be logged in to comment');
-      return;
-    }
-  
-    if (!newComment.trim()) {
-      toast.warning('Comment cannot be empty');
-      return;
-    }
-  
-    try {
-      const res = await axios.post(
-        'http://localhost:5000/api/comments',
-        { postId: post.id, content: newComment },
-        { headers: { Authorization: `Bearer ${auth.token}` } }
-      );
-  
-      if (socket) {
-        socket.emit('newComment', {
-          postId: post.id,
-          comment: res.data.comment
-        });
-      }
-  
-      setNewComment('');
-      toast.success('Comment added!');
-    } catch (err) {
-      toast.error(err.response?.data?.message || 'Error adding comment');
-    }
-  };
-
-  const deleteComment = async (commentId) => {
-    try {
-      await axios.delete(`http://localhost:5000/api/comments/${commentId}`, {
-        headers: { Authorization: `Bearer ${auth.token}` },
-      });
-
-      // No need to manually remove the comment; Socket.io will handle it
-
-      toast.success('Comment deleted');
-    } catch (err) {
-      toast.error('Error deleting comment');
     }
   };
 

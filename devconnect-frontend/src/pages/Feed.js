@@ -34,7 +34,25 @@ socket.on('postCreated', (newPost) => {
   setPosts((prevPosts) => [newPost, ...prevPosts]);
   toast.success('New post created!');
 });
+socket.on('commentAdded', ({ postId, total }) => {
+  setPosts(prevPosts => 
+    prevPosts.map(post => 
+      post.id === postId 
+        ? { ...post, commentCount: total }
+        : post
+    )
+  );
+});
 
+socket.on('commentDeleted', ({ postId, total }) => {
+  setPosts(prevPosts => 
+    prevPosts.map(post => 
+      post.id === postId 
+        ? { ...post, commentCount: total }
+        : post
+    )
+  );
+});
       // Listen for post likes
       socket.on('postLikeUpdated', ({ postId, userId, action, likeCount }) => {
         setPosts((prevPosts) =>
@@ -79,6 +97,8 @@ socket.on('postCreated', (newPost) => {
         socket.off('postLikeUpdated');
         socket.off('postDeleted');
         socket.off('postUpdated');
+        socket.off('commentAdded');
+        socket.off('commentDeleted');
       };
     }
   }, [socket, auth.user?.id]);

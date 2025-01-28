@@ -13,7 +13,12 @@ module.exports = {
           '100%': { opacity: 1, transform: 'translateY(0)' },
         },
       },
+      fontFamily: {
+        sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'], 
+        body: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'], 
+      },
     },
   },
+  variants: {},
   plugins: [],
 };

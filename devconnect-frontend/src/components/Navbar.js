@@ -8,6 +8,7 @@ import Avatar from 'react-avatar';
 import { FaSun, FaMoon, FaTools } from 'react-icons/fa'; // Import FaTools for admin
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
+import logo from './logo.png'; // Import the logo image
 
 export default function Navbar() {
   const { auth, logout } = useContext(AuthContext);
@@ -72,10 +73,18 @@ export default function Navbar() {
   return (
     <nav className="bg-gradient-to-r from-blue-700 to-blue-500 dark:bg-gray-800 text-white shadow-lg fixed w-full z-20 top-0 left-0 transition-colors duration-300">
       <div className="max-w-6xl mx-auto px-4 py-2 flex items-center justify-between">
-        {/* Logo / Brand */}
-        <Link to="/" className="font-extrabold text-lg md:text-xl tracking-wider">
-          DevConnect
-        </Link>
+        {/* Logo */}
+        <Link to="/" className="flex items-center space-x-2">
+  <img 
+    src={logo} 
+    alt="DevConnect Logo" 
+    className="h-12 w-12devconnect-frontend/src/components/logo.png md:h-14 md:w-14 object-contain filter invert" 
+  />
+  <span className="font-extrabold text-lg md:text-xl tracking-wider">
+    DevConnect
+  </span>
+</Link>
+
 
         {/* Desktop Menu */}
         <div className="hidden md:flex items-center space-x-4">
@@ -147,7 +156,7 @@ export default function Navbar() {
                     className="w-8 h-8 rounded-full ml-2 object-cover" 
                   />
                 ) : (
-                  <Avatar 
+                  <Avatar
                     name={auth.user.username || 'User'} 
                     size="30" 
                     round={true} 

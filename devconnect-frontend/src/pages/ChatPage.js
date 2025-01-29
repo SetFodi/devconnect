@@ -1,21 +1,19 @@
-// src/pages/ChatPage.js
+// frontend/src/pages/ChatPage.js
 
 import React, { useContext, useEffect, useLayoutEffect, useState, useRef } from 'react';
 import { AuthContext } from '../context/AuthContext';
-import { io } from 'socket.io-client';
+import { SocketContext } from '../context/SocketContext';
 import { toast } from 'react-toastify';
 import Avatar from 'react-avatar';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FaSearch, FaTimes, FaArrowDown } from 'react-icons/fa';
 
-let socket;
-
 export default function ChatPage() {
   const { auth } = useContext(AuthContext);
+  const { socket, activeUsers } = useContext(SocketContext);
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([]);
   const [typing, setTyping] = useState('');
-  const [activeUsers, setActiveUsers] = useState([]);
   const [selectedUser, setSelectedUser] = useState(null);
   const [isDirectMessageOpen, setIsDirectMessageOpen] = useState(false);
 
@@ -42,30 +40,47 @@ export default function ChatPage() {
   // Define userId as Number
   const userId = Number(auth.user.id);
 
+  // Debugging: Log active users and userId
   useEffect(() => {
-    socket = io('http://localhost:5000', {
-      auth: {
-        token: auth.token,
-      },
-    });
+    console.log('Current userId:', userId);
+    console.log('Active Users:', activeUsers);
+  }, [activeUsers, userId]);
 
-    // Receive chat history with profile pictures
+  useEffect(() => {
+    if (!socket) return;
+
+    // 1. Set up all necessary listeners first
     socket.on('chatHistory', (history) => {
+      console.log('Received chatHistory:', history); // Debugging
       setMessages(history);
     });
 
-    // Receive active users list
-    socket.on('activeUsers', (users) => {
-      setActiveUsers(users);
+    socket.on('chatMessage', (msg) => {
+      console.log('Received chatMessage:', msg); // Debugging
+      setMessages((prev) => [...prev, msg]);
+      if (!isAtBottomRef.current) {
+        setShowScrollButton(true);
+      }
+      setTyping('');
     });
 
-    // Direct Message Listener
+    socket.on('chatCleared', () => {
+      setMessages([]);
+      toast.info('Chat has been cleared by an administrator.');
+    });
+
+    socket.on('userTyping', (user) => {
+      setTyping(user ? `${user} is typing...` : '');
+    });
+
     socket.on('directMessage', (message) => {
+      console.log('Received directMessage:', message); // Debugging
+
       const otherUserId = message.senderId === userId ? message.recipientId : message.senderId;
 
       setDirectMessages((prev) => {
         const userMessages = prev[otherUserId] || [];
-        if (!userMessages.some((m) => m.id === message.id)) {
+        if (!userMessages.some((c) => c.id === message.id)) {
           return { ...prev, [otherUserId]: [...userMessages, message] };
         }
         return prev;
@@ -82,42 +97,30 @@ export default function ChatPage() {
       }
     });
 
-    // Receive new chat messages
-    socket.on('chatMessage', (msg) => {
-      setMessages((prev) => [...prev, msg]);
-      if (!isAtBottomRef.current) {
-        setShowScrollButton(true);
-      }
-      setTyping('');
+    socket.on('activeUsers', (users) => {
+      console.log('Updated active users:', users);
+      // Active users are managed via SocketContext
     });
 
-    // Listen for chatCleared event
-    socket.on('chatCleared', () => {
-      setMessages([]);
-      toast.info('Chat has been cleared by an administrator.');
+    socket.on('error', (error) => {
+      console.error('Socket error:', error);
+      toast.error(error.message || 'A socket error occurred');
     });
 
-    // Receive typing indicators
-    socket.on('userTyping', (user) => {
-      setTyping(user ? `${user} is typing...` : '');
-    });
+    // 2. After setting up listeners, request chat history
+    socket.emit('requestChatHistory');
 
-    socket.on('connect_error', () => {
-      toast.error('Connection to chat failed.');
-    });
-
-    // Cleanup on component unmount
+    // 3. Cleanup on unmount
     return () => {
-      socket.disconnect();
       socket.off('chatHistory');
-      socket.off('activeUsers');
-      socket.off('directMessage');
       socket.off('chatMessage');
       socket.off('chatCleared');
       socket.off('userTyping');
-      socket.off('connect_error');
+      socket.off('directMessage');
+      socket.off('activeUsers');
+      socket.off('error');
     };
-  }, [auth.token, userId, selectedUser]);
+  }, [socket, userId, selectedUser]);
 
   // Persist unreadMessages to localStorage
   useEffect(() => {
@@ -139,6 +142,11 @@ export default function ChatPage() {
   };
 
   const handleUserClick = async (user) => {
+    if (Number(user.userId) === userId) { // **Safeguard**
+      toast.warning("You cannot send messages to yourself.");
+      return;
+    }
+
     setSelectedUser(user);
     setIsDirectMessageOpen(true);
     // Reset unread count for this user
@@ -156,6 +164,9 @@ export default function ChatPage() {
             Authorization: `Bearer ${auth.token}`,
           },
         });
+        if (!response.ok) {
+          throw new Error('Failed to fetch direct messages');
+        }
         const data = await response.json();
         // Ensure senderId and recipientId are numbers
         const parsedData = data.map((msg) => ({
@@ -171,7 +182,7 @@ export default function ChatPage() {
     }
   };
 
-  // Improved sendDirectMessage function
+  // Send a direct message
   const sendDirectMessage = () => {
     if (selectedUser && directMessage.trim()) {
       const directMessageObj = {
@@ -179,6 +190,7 @@ export default function ChatPage() {
         recipientId: selectedUser.userId,
         message: directMessage.trim(),
       };
+      console.log('Sending directMessage:', directMessageObj); // Debugging
       socket.emit('directMessage', directMessageObj);
       setDirectMessage('');
     }
@@ -202,6 +214,7 @@ export default function ChatPage() {
       text: message,
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
+    console.log('Sending chatMessage:', msgObj); // Debugging
     socket.emit('chatMessage', msgObj);
     setMessage('');
   };
@@ -282,6 +295,7 @@ export default function ChatPage() {
         <h3 className="text-lg font-semibold mb-2 text-gray-700 dark:text-gray-200">Active Users</h3>
         <ul className="flex-1 overflow-auto">
           {activeUsers
+            .filter((user) => Number(user.userId) !== userId) // **Ensure userId is a number**
             .filter((user) =>
               user.username.toLowerCase().includes(searchTerm.toLowerCase())
             )
@@ -295,6 +309,7 @@ export default function ChatPage() {
                 aria-label={`Chat with ${user.username}`}
               >
                 <Avatar
+                  src={user.profile_picture}
                   name={user.username}
                   size="40"
                   round={true}
@@ -349,10 +364,11 @@ export default function ChatPage() {
                 <div className="max-w-md flex items-end space-x-2">
                   {m.user !== auth.user.username && (
                     <Avatar
+                      src={m.profile_picture}
                       name={m.user}
                       size="40"
                       round={true}
-                      className="flex-shrink-0"
+                      className="w-10 h-10"
                     />
                   )}
                   <div>
@@ -434,6 +450,7 @@ export default function ChatPage() {
               </button>
               <div className="flex items-center mb-4">
                 <Avatar
+                  src={selectedUser.profile_picture}
                   name={selectedUser.username}
                   size="50"
                   round={true}
@@ -454,6 +471,7 @@ export default function ChatPage() {
                     <div className="max-w-md flex items-end space-x-2">
                       {message.senderId !== userId && (
                         <Avatar
+                          src={message.profile_picture}
                           name={message.senderUsername}
                           size="35"
                           round={true}

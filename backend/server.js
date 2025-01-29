@@ -28,6 +28,7 @@ const pool = mysql.createPool({
   queueLimit: 0,
 });
 
+// MIME types for file uploads
 const IMAGE_MIME_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
 const VIDEO_MIME_TYPES = ['video/mp4', 'video/mpeg', 'video/quicktime', 'video/x-msvideo', 'video/x-matroska'];
 
@@ -356,9 +357,11 @@ app.get('/api/messages/:userId', authMiddleware, async (req, res) => {
         dm.recipient_id AS recipientId,
         dm.message,
         dm.created_at,
-        u.username AS senderUsername
+        u.username AS senderUsername,
+        p.profile_picture
       FROM direct_messages dm
       JOIN users u ON dm.sender_id = u.id
+      LEFT JOIN profiles p ON u.id = p.user_id
       WHERE 
         (dm.sender_id = ? AND dm.recipient_id = ?) OR
         (dm.sender_id = ? AND dm.recipient_id = ?)
@@ -525,7 +528,7 @@ app.post('/api/posts/:id/like', authMiddleware, async (req, res) => {
       await connection.commit();
       connection.release();
 
-      // Emit socket event with accurate count to the post's creator
+      // Emit socket event with accurate count to all clients
       io.emit('postLikeUpdated', {
         postId,
         userId,
@@ -879,7 +882,7 @@ const httpServer = http.createServer(app);
 // 2. Create the Socket.io server, pass in `httpServer`:
 const io = new Server(httpServer, {
   cors: {
-    origin: "*", // or your frontend URL, e.g. "http://localhost:3000"
+    origin: "*", // Replace with your frontend URL in production, e.g., "http://localhost:3000"
     methods: ["GET", "POST"]
   }
 });
@@ -888,6 +891,16 @@ const io = new Server(httpServer, {
 
 // Map to track connected users
 const connectedUsers = new Map();
+
+// Function to emit active users list to all connected clients
+function emitActiveUsers() {
+  const activeUsers = Array.from(connectedUsers.entries()).map(([id, user]) => ({
+    userId: Number(id), // Ensure userId is a number
+    username: user.username,
+    profile_picture: user.profile_picture,
+  }));
+  io.emit('activeUsers', activeUsers);
+}
 
 io.on('connection', async (socket) => {
   console.log('A user connected:', socket.id);
@@ -906,8 +919,13 @@ io.on('connection', async (socket) => {
       return;
     }
     try {
-      // Fetch user details
-      const [rows] = await pool.query('SELECT username, is_banned, role FROM users WHERE id = ?', [decoded.userId]);
+      // Fetch user details including profile_picture
+      const [rows] = await pool.query(`
+        SELECT u.username, u.is_banned, u.role, p.profile_picture
+        FROM users u
+        LEFT JOIN profiles p ON u.id = p.user_id
+        WHERE u.id = ?
+      `, [decoded.userId]);
       const user = rows[0];
       if (!user) {
         socket.emit('error', 'User not found');
@@ -921,35 +939,39 @@ io.on('connection', async (socket) => {
       }
 
       // Attach user info to socket
-      socket.user = { id: decoded.userId, role: user.role, username: user.username };
+      socket.user = { id: decoded.userId, role: user.role, username: user.username, profile_picture: user.profile_picture };
 
       // Add user to connectedUsers
-      connectedUsers.set(socket.user.id, socket.user.username);
+      connectedUsers.set(socket.user.id, {
+        username: socket.user.username,
+        profile_picture: socket.user.profile_picture,
+      });
 
-      // Join the user to a unique room based on their userId
-      const userRoom = `user_${socket.user.id}`;
-      socket.join(userRoom);
-      console.log(`User ${socket.user.username} joined room ${userRoom}`);
+      // Join a unique room for direct messaging
+      socket.join(`user_${socket.user.id}`);
+      console.log(`User ${socket.user.username} joined room user_${socket.user.id}`);
 
-      // Emit active users list to all connected clients
+      // Emit active users list globally
       emitActiveUsers();
 
-      // Send existing chat history to the newly connected client
-      try {
-        // Fetch chat messages along with user profile pictures
-        const [chatRows] = await pool.query(`
-          SELECT cm.*, u.username, p.profile_picture
-          FROM chat_messages cm
-          JOIN users u ON cm.user = u.username
-          LEFT JOIN profiles p ON u.id = p.user_id
-          ORDER BY cm.created_at ASC
-        `);
-        socket.emit('chatHistory', chatRows);
-      } catch (err) {
-        console.error('Error fetching chat history:', err);
-      }
+      // Listen for 'requestChatHistory' from the client
+      socket.on('requestChatHistory', async () => {
+        try {
+          const [chatRows] = await pool.query(`
+            SELECT cm.*, u.username, p.profile_picture
+            FROM chat_messages cm
+            JOIN users u ON cm.user = u.username
+            LEFT JOIN profiles p ON u.id = p.user_id
+            ORDER BY cm.created_at ASC
+          `);
+          socket.emit('chatHistory', chatRows);
+        } catch (err) {
+          console.error('Error fetching chat history:', err);
+          socket.emit('error', 'Failed to fetch chat history');
+        }
+      });
 
-      // Handle direct message
+      // Handle 'directMessage' event
       socket.on('directMessage', async (directMessageObj) => {
         try {
           const senderId = socket.user.id; // from socket
@@ -984,9 +1006,11 @@ io.on('connection', async (socket) => {
               dm.recipient_id AS recipientId,
               dm.message,
               dm.created_at,
-              u.username AS senderUsername
+              u.username AS senderUsername,
+              p.profile_picture
             FROM direct_messages dm
             JOIN users u ON dm.sender_id = u.id
+            LEFT JOIN profiles p ON u.id = p.user_id
             WHERE dm.id = ?
           `, [result.insertId]);
 
@@ -996,19 +1020,18 @@ io.on('connection', async (socket) => {
             recipientId: Number(messageRows[0].recipientId),
           };
 
-          // Emit to both sender and recipient if they are connected
-          const senderRoom = `user_${senderId}`;
-          const recipientRoom = `user_${recipientId}`;
-          
-          io.to(senderRoom).to(recipientRoom).emit('directMessage', newMessage);
+          // Emit to recipient only
+          socket.to(`user_${recipientId}`).emit('directMessage', newMessage);
+
+          // Emit back to sender
+          socket.emit('directMessage', newMessage);
         } catch (error) {
           console.error('Error handling directMessage event:', error);
-          // Optionally, emit an error to the sender
           socket.emit('error', 'Failed to send direct message');
         }
       });
 
-      // Handle chatMessage
+      // Handle 'chatMessage' event
       socket.on('chatMessage', async (msg) => {
         if (!socket.user) return;
 
@@ -1166,20 +1189,6 @@ io.on('connection', async (socket) => {
     }
   });
 });
-
-// Function to emit active users list to all connected clients
-function emitActiveUsers() {
-  connectedUsers.forEach((username, userId) => {
-    // Create a list of active users excluding the current user
-    const usersList = Array.from(connectedUsers.entries())
-      .filter(([id, _]) => id !== userId)
-      .map(([id, uname]) => ({ userId: id, username: uname }));
-    
-    // Emit 'activeUsers' event to each user with their respective list
-    const userRoom = `user_${userId}`;
-    io.to(userRoom).emit('activeUsers', usersList);
-  });
-}
 
 /*******************************************************
  * START SERVER WITH SOCKET.IO

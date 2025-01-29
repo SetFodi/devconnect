@@ -1,3 +1,5 @@
+// frontend/src/components/PostCard.js
+
 import React, { useState, useContext, useEffect } from 'react';
 import axios from 'axios';
 import { AuthContext } from '../context/AuthContext';
@@ -9,7 +11,7 @@ import { FaImage, FaVideo, FaTimes, FaComment } from 'react-icons/fa';
 
 export default function PostCard({ post, onLike, onDelete }) {
   const { auth } = useContext(AuthContext);
-  const socket = useContext(SocketContext);
+  const { socket } = useContext(SocketContext); // Correctly destructure socket
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(post.content);
   const [newImage, setNewImage] = useState(null);
@@ -36,9 +38,9 @@ export default function PostCard({ post, onLike, onDelete }) {
 
   // Socket event listeners for comments
   useEffect(() => {
-    if (socket) {
+    if (socket && typeof socket.on === 'function') { // Ensure socket is valid
       // Listen for new comments
-      socket.on('commentAdded', ({ postId, comment, total }) => {
+      const handleCommentAdded = ({ postId, comment, total }) => {
         if (postId === post.id) {
           // Always update the count
           setCommentCount(total);
@@ -53,10 +55,9 @@ export default function PostCard({ post, onLike, onDelete }) {
             });
           }
         }
-      });
-  
-      // Listen for deleted comments
-      socket.on('commentDeleted', ({ postId, commentId, total }) => {
+      };
+
+      const handleCommentDeleted = ({ postId, commentId, total }) => {
         if (postId === post.id) {
           // Always update the count
           setCommentCount(total);
@@ -66,11 +67,14 @@ export default function PostCard({ post, onLike, onDelete }) {
             setComments(prev => prev.filter(c => c.id !== commentId));
           }
         }
-      });
-  
+      };
+
+      socket.on('commentAdded', handleCommentAdded);
+      socket.on('commentDeleted', handleCommentDeleted);
+
       return () => {
-        socket.off('commentAdded');
-        socket.off('commentDeleted');
+        socket.off('commentAdded', handleCommentAdded);
+        socket.off('commentDeleted', handleCommentDeleted);
       };
     }
   }, [socket, post.id, showComments]);
@@ -111,7 +115,7 @@ export default function PostCard({ post, onLike, onDelete }) {
       }
 
       // Emit socket event immediately after successful comment creation
-      if (socket) {
+      if (socket && typeof socket.emit === 'function') {
         socket.emit('newComment', {
           postId: post.id,
           comment: res.data.comment,
@@ -140,7 +144,7 @@ export default function PostCard({ post, onLike, onDelete }) {
       }
       
       // Emit socket event with postId and updated total
-      if (socket) {
+      if (socket && typeof socket.emit === 'function') {
         socket.emit('deleteComment', {
           postId: post.id,
           commentId,
@@ -208,11 +212,13 @@ export default function PostCard({ post, onLike, onDelete }) {
         });
 
         // Emit socket event for unlike
-        socket.emit('postLiked', {
-          postId: post.id,
-          userId: auth.user.id,
-          action: 'unlike',
-        });
+        if (socket && typeof socket.emit === 'function') {
+          socket.emit('postLiked', {
+            postId: post.id,
+            userId: auth.user.id,
+            action: 'unlike',
+          });
+        }
 
         onLike({ ...post, likeCount: post.likeCount - 1, isLiked: 0 });
         toast.info('Post unliked.');
@@ -224,11 +230,13 @@ export default function PostCard({ post, onLike, onDelete }) {
         );
 
         // Emit socket event for like
-        socket.emit('postLiked', {
-          postId: post.id,
-          userId: auth.user.id,
-          action: 'like',
-        });
+        if (socket && typeof socket.emit === 'function') {
+          socket.emit('postLiked', {
+            postId: post.id,
+            userId: auth.user.id,
+            action: 'like',
+          });
+        }
 
         onLike({ ...post, likeCount: post.likeCount + 1, isLiked: 1 });
         toast.success('Post liked!');
@@ -301,12 +309,14 @@ export default function PostCard({ post, onLike, onDelete }) {
       });
   
       // Emit socket event for post update
-      socket.emit('postUpdated', {
-        postId: post.id,
-        content: editContent,
-        image_url: previewUrl || post.image_url,
-        video_url: videoPreviewUrl || post.video_url, // Include video_url
-      });
+      if (socket && typeof socket.emit === 'function') {
+        socket.emit('postUpdated', {
+          postId: post.id,
+          content: editContent,
+          image_url: previewUrl || post.image_url,
+          video_url: videoPreviewUrl || post.video_url, // Include video_url
+        });
+      }
     } catch (err) {
       toast.error(err.response?.data?.message || 'Error editing post');
     }

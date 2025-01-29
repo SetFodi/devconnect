@@ -1,18 +1,20 @@
-import React, { createContext, useEffect, useState } from 'react';
+// frontend/src/context/SocketContext.js
+
+import React, { createContext, useEffect, useState, useContext } from 'react';
 import { io } from 'socket.io-client';
-import { useContext } from 'react';
 import { AuthContext } from './AuthContext';
-import { toast } from 'react-toastify'; // Import toast if you're using it
+import { toast } from 'react-toastify';
 
 export const SocketContext = createContext();
 
 export const SocketProvider = ({ children }) => {
   const { auth } = useContext(AuthContext);
   const [socket, setSocket] = useState(null);
+  const [activeUsers, setActiveUsers] = useState([]);
 
   useEffect(() => {
     let newSocket;
-   
+
     if (auth.token) {
       try {
         newSocket = io('http://localhost:5000', {
@@ -26,6 +28,17 @@ export const SocketProvider = ({ children }) => {
           console.log('Socket connected:', newSocket.id);
         });
 
+        // Listen for active users updates
+        newSocket.on('activeUsers', (users) => {
+          console.log('Received activeUsers:', users);
+          setActiveUsers(users);
+        });
+
+        // Listen for chat history
+        newSocket.on('chatHistory', (history) => {
+          // Optionally, manage chat history here or within specific components
+        });
+
         newSocket.on('connect_error', (error) => {
           console.error('Socket connection error:', error);
           toast.error('Connection error. Retrying...');
@@ -34,7 +47,7 @@ export const SocketProvider = ({ children }) => {
         newSocket.on('disconnect', (reason) => {
           console.log('Socket disconnected:', reason);
           if (reason === 'io server disconnect') {
-            // the disconnection was initiated by the server, reconnect manually
+            // The disconnection was initiated by the server, reconnect manually
             newSocket.connect();
           }
         });
@@ -59,7 +72,7 @@ export const SocketProvider = ({ children }) => {
   }, [auth.token]);
 
   return (
-    <SocketContext.Provider value={socket}>
+    <SocketContext.Provider value={{ socket, activeUsers }}>
       {children}
     </SocketContext.Provider>
   );

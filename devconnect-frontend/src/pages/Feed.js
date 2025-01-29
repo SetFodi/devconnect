@@ -20,16 +20,27 @@ export default function Feed() {
   const [postVideo, setPostVideo] = useState(null);
   const [videoPreview, setVideoPreview] = useState(null);
   const { auth } = useContext(AuthContext);
-  const socket = useContext(SocketContext); // Use centralized socket
+  const { socket } = useContext(SocketContext); // Destructure socket correctly
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
 
+  // Debugging: Check what socket is
+  useEffect(() => {
+    console.log('Socket Instance:', socket);
+  }, [socket]);
+
   // Socket.IO setup
   useEffect(() => {
     if (socket) {
-      // Join feed room for real-time updates
-      socket.emit('joinFeed');
+      // Ensure socket is connected before emitting
+      if (socket.connected) {
+        socket.emit('joinFeed');
+      } else {
+        socket.on('connect', () => {
+          socket.emit('joinFeed');
+        });
+      }
 
       // Listen for new posts
       socket.on('postCreated', (newPost) => {
@@ -39,9 +50,9 @@ export default function Feed() {
 
       // Listen for comment additions and deletions to update comment counts
       socket.on('commentAdded', ({ postId, total }) => {
-        setPosts(prevPosts => 
-          prevPosts.map(post => 
-            post.id === postId 
+        setPosts((prevPosts) =>
+          prevPosts.map((post) =>
+            post.id === postId
               ? { ...post, commentCount: total }
               : post
           )
@@ -49,9 +60,9 @@ export default function Feed() {
       });
 
       socket.on('commentDeleted', ({ postId, total }) => {
-        setPosts(prevPosts => 
-          prevPosts.map(post => 
-            post.id === postId 
+        setPosts((prevPosts) =>
+          prevPosts.map((post) =>
+            post.id === postId
               ? { ...post, commentCount: total }
               : post
           )

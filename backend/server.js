@@ -1,6 +1,5 @@
-/*******************************************************
- * server.js - Full DevConnect Backend with Socket.io
- *******************************************************/
+// server.js
+
 require('dotenv').config();
 
 const express = require('express');
@@ -9,7 +8,6 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const path = require('path');
-// NEW: Import http and socket.io
 const http = require('http');
 const { Server } = require('socket.io');
 const multer = require('multer');
@@ -29,10 +27,11 @@ const pool = mysql.createPool({
   connectionLimit: 10,
   queueLimit: 0,
 });
+
 const IMAGE_MIME_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
 const VIDEO_MIME_TYPES = ['video/mp4', 'video/mpeg', 'video/quicktime', 'video/x-msvideo', 'video/x-matroska'];
 
-
+// Multer Configuration
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     cb(null, 'uploads/'); // Ensure this directory exists
@@ -61,11 +60,13 @@ const upload = multer({
 
 // 2) JWT Auth Middleware
 async function getLikeCount(postId) {
-  return await pool.query(
+  const [rows] = await pool.query(
     'SELECT COUNT(*) as count FROM likes WHERE post_id = ?',
     [postId]
   );
+  return rows[0].count;
 }
+
 async function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader) {
@@ -267,11 +268,6 @@ app.post('/api/admin/users/:id/demote', authMiddleware, adminMiddleware, async (
 });
 
 /**
- * Create or Update profile
- * POST /api/profile
- */
-
-/**
  * Create or Update profile with profile picture
  * POST /api/profile
  */
@@ -343,6 +339,42 @@ app.get('/api/profile', async (req, res) => {
     res.json(rows);
   } catch (error) {
     console.error('Get all profiles error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Route to fetch direct messages between two users
+app.get('/api/messages/:userId', authMiddleware, async (req, res) => {
+  try {
+    const currentUserId = req.user.userId;
+    const otherUserId = parseInt(req.params.userId, 10); // Ensure it's a number
+
+    const [messages] = await pool.query(`
+      SELECT 
+        dm.id,
+        dm.sender_id AS senderId,
+        dm.recipient_id AS recipientId,
+        dm.message,
+        dm.created_at,
+        u.username AS senderUsername
+      FROM direct_messages dm
+      JOIN users u ON dm.sender_id = u.id
+      WHERE 
+        (dm.sender_id = ? AND dm.recipient_id = ?) OR
+        (dm.sender_id = ? AND dm.recipient_id = ?)
+      ORDER BY dm.created_at ASC
+    `, [currentUserId, otherUserId, otherUserId, currentUserId]);
+
+    // Ensure senderId and recipientId are numbers
+    const formattedMessages = messages.map(msg => ({
+      ...msg,
+      senderId: Number(msg.senderId),
+      recipientId: Number(msg.recipientId),
+    }));
+
+    res.json(formattedMessages);
+  } catch (error) {
+    console.error('Error fetching messages:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -456,7 +488,6 @@ app.put('/api/posts/:id', authMiddleware, upload.fields([{ name: 'image', maxCou
  * Like Post
  * POST /api/posts/:id/like
  */
-// In the POST /api/posts/:id/like endpoint:
 app.post('/api/posts/:id/like', authMiddleware, async (req, res) => {
   try {
     const postId = req.params.id;
@@ -494,7 +525,7 @@ app.post('/api/posts/:id/like', authMiddleware, async (req, res) => {
       await connection.commit();
       connection.release();
 
-      // Emit socket event with accurate count
+      // Emit socket event with accurate count to the post's creator
       io.emit('postLikeUpdated', {
         postId,
         userId,
@@ -517,6 +548,7 @@ app.post('/api/posts/:id/like', authMiddleware, async (req, res) => {
   }
 });
 
+// Clear Chat (Admin Only)
 app.delete('/api/admin/chat/clear', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     await pool.query('DELETE FROM chat_messages');
@@ -529,7 +561,7 @@ app.delete('/api/admin/chat/clear', authMiddleware, adminMiddleware, async (req,
   }
 });
 
-// server.js (Fix in DELETE /api/comments/:id)
+// Delete Comment (Authenticated Users or Post Owners)
 app.delete('/api/comments/:id', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -578,29 +610,6 @@ app.delete('/api/comments/:id', authMiddleware, async (req, res) => {
 });
 
 /**
- * Delete Specific Chat Message
- * DELETE /api/admin/chat/message/:id
- */
-app.delete('/api/admin/chat/message/:id', authMiddleware, adminMiddleware, async (req, res) => {
-  try {
-    const messageId = req.params.id;
-    // Check if message exists
-    const [rows] = await pool.query('SELECT * FROM chat_messages WHERE id = ?', [messageId]);
-    if (rows.length === 0) {
-      return res.status(404).json({ message: 'Message not found' });
-    }
-    // Delete the message
-    await pool.query('DELETE FROM chat_messages WHERE id = ?', [messageId]);
-    // Notify all clients to remove the message
-    io.emit('chatMessageDeleted', { id: messageId });
-    res.json({ message: 'Message deleted successfully' });
-  } catch (error) {
-    console.error('Delete message error:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-/**
  * Unlike Post
  * DELETE /api/posts/:id/like
  */
@@ -623,13 +632,17 @@ app.delete('/api/posts/:id/like', authMiddleware, async (req, res) => {
       'DELETE FROM likes WHERE post_id=? AND user_id=?',
       [postId, userId]
     );
+
+    const likeCount = await getLikeCount(postId);
+
     io.emit('postLikeUpdated', {
       postId,
       userId,
       action: 'unlike',
-      likeCount: (await getLikeCount(postId))[0].count
+      likeCount
     });
-    res.json({ message: 'Post unliked' });
+
+    res.json({ message: 'Post unliked', likeCount });
   } catch (error) {
     console.error('Unlike post error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -640,8 +653,6 @@ app.delete('/api/posts/:id/like', authMiddleware, async (req, res) => {
  * Get all posts
  * GET /api/posts
  */
-// server.js (Partial Corrections)
-
 app.get('/api/posts', async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -711,8 +722,6 @@ app.get('/api/posts/me', authMiddleware, async (req, res) => {
  * Delete a post (must be the owner)
  * DELETE /api/posts/:id
  */
-// server.js (Delete Post Route Optimization)
-
 app.delete('/api/posts/:id', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -742,6 +751,9 @@ app.delete('/api/posts/:id', authMiddleware, async (req, res) => {
       await connection.commit();
       connection.release();
 
+      // Emit postDeleted event to all clients
+      io.emit('postDeleted', postId);
+
       res.json({ message: 'Post deleted successfully' });
     } catch (err) {
       await connection.rollback();
@@ -758,11 +770,6 @@ app.delete('/api/posts/:id', authMiddleware, async (req, res) => {
  * Create a comment
  * POST /api/comments
  */
-// In server.js, update the create comment endpoint
-
-// server.js (Consistency in POST /api/comments)
-
-// Replace the existing POST /api/comments endpoint with this:
 app.post('/api/comments', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -802,7 +809,7 @@ app.post('/api/comments', authMiddleware, async (req, res) => {
       [postId]
     );
 
-    // Use io instead of socket to emit the event to all clients
+    // Emit commentAdded event to all clients
     io.emit('commentAdded', {
       postId,
       comment: commentRows[0],
@@ -819,7 +826,6 @@ app.post('/api/comments', authMiddleware, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
-
 
 /**
  * Get comments by post
@@ -867,16 +873,21 @@ app.get('/api/comments/:postId', async (req, res) => {
 /*******************************************************
  * START SERVER WITH SOCKET.IO
  *******************************************************/
-// 1. Import http and socket.io (already done at the top)
-// 2. Create an HTTP server from the Express app:
+// 1. Create an HTTP server from the Express app:
 const httpServer = http.createServer(app);
 
-// 3. Create the Socket.io server, pass in `httpServer`:
+// 2. Create the Socket.io server, pass in `httpServer`:
 const io = new Server(httpServer, {
   cors: {
     origin: "*", // or your frontend URL, e.g. "http://localhost:3000"
+    methods: ["GET", "POST"]
   }
 });
+
+// 3. Handle Socket.io connections
+
+// Map to track connected users
+const connectedUsers = new Map();
 
 io.on('connection', async (socket) => {
   console.log('A user connected:', socket.id);
@@ -912,6 +923,17 @@ io.on('connection', async (socket) => {
       // Attach user info to socket
       socket.user = { id: decoded.userId, role: user.role, username: user.username };
 
+      // Add user to connectedUsers
+      connectedUsers.set(socket.user.id, socket.user.username);
+
+      // Join the user to a unique room based on their userId
+      const userRoom = `user_${socket.user.id}`;
+      socket.join(userRoom);
+      console.log(`User ${socket.user.username} joined room ${userRoom}`);
+
+      // Emit active users list to all connected clients
+      emitActiveUsers();
+
       // Send existing chat history to the newly connected client
       try {
         // Fetch chat messages along with user profile pictures
@@ -926,6 +948,65 @@ io.on('connection', async (socket) => {
       } catch (err) {
         console.error('Error fetching chat history:', err);
       }
+
+      // Handle direct message
+      socket.on('directMessage', async (directMessageObj) => {
+        try {
+          const senderId = socket.user.id; // from socket
+          const recipientId = Number(directMessageObj.recipientId);
+          const messageText = directMessageObj.message.trim();
+
+          if (!messageText) return;
+
+          // Validate recipientId exists and is not banned
+          const [recipientRows] = await pool.query('SELECT username, is_banned FROM users WHERE id = ?', [recipientId]);
+          if (recipientRows.length === 0) {
+            socket.emit('error', 'Recipient user not found');
+            return;
+          }
+          const recipient = recipientRows[0];
+          if (recipient.is_banned) {
+            socket.emit('error', 'Recipient is banned');
+            return;
+          }
+
+          // Store message in the database
+          const [result] = await pool.query(
+            'INSERT INTO direct_messages (sender_id, recipient_id, message, created_at) VALUES (?, ?, ?, NOW())',
+            [senderId, recipientId, messageText]
+          );
+
+          // Fetch the created message with sender details
+          const [messageRows] = await pool.query(`
+            SELECT 
+              dm.id,
+              dm.sender_id AS senderId,
+              dm.recipient_id AS recipientId,
+              dm.message,
+              dm.created_at,
+              u.username AS senderUsername
+            FROM direct_messages dm
+            JOIN users u ON dm.sender_id = u.id
+            WHERE dm.id = ?
+          `, [result.insertId]);
+
+          const newMessage = {
+            ...messageRows[0],
+            senderId: Number(messageRows[0].senderId),
+            recipientId: Number(messageRows[0].recipientId),
+          };
+
+          // Emit to both sender and recipient if they are connected
+          const senderRoom = `user_${senderId}`;
+          const recipientRoom = `user_${recipientId}`;
+          
+          io.to(senderRoom).to(recipientRoom).emit('directMessage', newMessage);
+        } catch (error) {
+          console.error('Error handling directMessage event:', error);
+          // Optionally, emit an error to the sender
+          socket.emit('error', 'Failed to send direct message');
+        }
+      });
 
       // Handle chatMessage
       socket.on('chatMessage', async (msg) => {
@@ -955,7 +1036,7 @@ io.on('connection', async (socket) => {
 
           // Insert the new message into 'chat_messages'
           const [result] = await pool.query(
-            'INSERT INTO chat_messages (user, text, time) VALUES (?, ?, ?)',
+            'INSERT INTO chat_messages (user, text, time, created_at) VALUES (?, ?, ?, NOW())',
             [socket.user.username, msg.text, msg.time]
           );
 
@@ -977,6 +1058,7 @@ io.on('connection', async (socket) => {
 
       // Listen for "typing"
       socket.on('typing', (username) => {
+        // Broadcast to others that this user is typing
         socket.broadcast.emit('userTyping', username);
       });
 
@@ -1000,92 +1082,110 @@ io.on('connection', async (socket) => {
             socket.emit('error', 'Failed to clear chat');
           });
       });
+
+      // Additional Socket.io Events for Posts and Comments
+      socket.on('joinFeed', () => {
+        socket.join('feed');
+      });
+
+      socket.on('newPost', (post) => {
+        io.to('feed').emit('postCreated', post);
+      });
+
+      socket.on('postLiked', async ({ postId, userId, action }) => {
+        try {
+          // Fetch updated like count
+          const likeCount = await getLikeCount(postId);
+
+          // Broadcast to all other clients except the sender
+          socket.broadcast.emit('postLikeUpdated', {
+            postId,
+            userId,
+            action,
+            likeCount
+          });
+        } catch (error) {
+          console.error('Error handling postLiked event:', error);
+        }
+      });
+
+      socket.on('newComment', async ({ postId, comment }) => {
+        try {
+          const [countRows] = await pool.query(
+            'SELECT COUNT(*) as total FROM comments WHERE post_id = ?',
+            [postId]
+          );
+
+          io.emit('commentAdded', {
+            postId,
+            comment,
+            total: countRows[0].total
+          });
+        } catch (error) {
+          console.error('Error handling newComment event:', error);
+        }
+      });
+
+      // Handle deleteComment event
+      socket.on('deleteComment', async ({ postId, commentId }) => {
+        try {
+          // Get updated comment count after deletion
+          const [countRows] = await pool.query(
+            'SELECT COUNT(*) as total FROM comments WHERE post_id = ?',
+            [postId]
+          );
+
+          // Emit to all clients including sender
+          io.emit('commentDeleted', {
+            postId,
+            commentId,
+            total: countRows[0].total
+          });
+        } catch (error) {
+          console.error('Error handling deleteComment event:', error);
+        }
+      });
+
+      socket.on('deletePost', (postId) => {
+        // Broadcast to all other clients except the sender
+        io.emit('postDeleted', postId);
+      });
+
+      // Handle disconnection
+      socket.on('disconnect', () => {
+        console.log(`User disconnected: ${socket.user.username} (${socket.id})`);
+        // Remove user from connectedUsers
+        connectedUsers.delete(socket.user.id);
+        // Emit updated active users list to all connected clients
+        emitActiveUsers();
+      });
     } catch (error) {
       console.error('Error fetching user details:', error);
       socket.emit('error', 'Server error');
       socket.disconnect();
     }
   });
-// Add these inside the connection handler, after the existing chat socket events
-socket.on('joinFeed', () => {
-  socket.join('feed');
 });
 
-socket.on('newPost', (post) => {
-  io.to('feed').emit('postCreated', post);
-});
-
-socket.on('postLiked', async ({ postId, userId, action }) => {
-  try {
-    // Fetch updated like count
-    const [countResult] = await pool.query(
-      'SELECT COUNT(*) as count FROM likes WHERE post_id = ?',
-      [postId]
-    );
-
-    // Broadcast to all other clients except the sender
-    socket.broadcast.emit('postLikeUpdated', {
-      postId,
-      userId,
-      action,
-      likeCount: countResult[0].count
-    });
-  } catch (error) {
-    console.error('Error handling postLiked event:', error);
-  }
-});
-
-socket.on('newComment', async ({ postId, comment }) => {
-  try {
-    const [countRows] = await pool.query(
-      'SELECT COUNT(*) as total FROM comments WHERE post_id = ?',
-      [postId]
-    );
-
-    io.emit('commentAdded', {
-      postId,
-      comment,
-      total: countRows[0].total
-    });
-  } catch (error) {
-    console.error('Error handling newComment event:', error);
-  }
-});
-
-// In your server.js socket connection handler, update the deleteComment event handler
-
-socket.on('deleteComment', async ({ postId, commentId }) => {
-  try {
-    // Get updated comment count after deletion
-    const [countRows] = await pool.query(
-      'SELECT COUNT(*) as total FROM comments WHERE post_id = ?',
-      [postId]
-    );
-
-    // Emit to all clients including sender
-    io.emit('commentDeleted', {
-      postId,
-      commentId,
-      total: countRows[0].total
-    });
-  } catch (error) {
-    console.error('Error handling deleteComment event:', error);
-  }
-});
-
-socket.on('deletePost', (postId) => {
-  // Broadcast to all other clients except the sender
-  socket.broadcast.emit('postDeleted', postId);
-});
-  socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
+// Function to emit active users list to all connected clients
+function emitActiveUsers() {
+  connectedUsers.forEach((username, userId) => {
+    // Create a list of active users excluding the current user
+    const usersList = Array.from(connectedUsers.entries())
+      .filter(([id, _]) => id !== userId)
+      .map(([id, uname]) => ({ userId: id, username: uname }));
+    
+    // Emit 'activeUsers' event to each user with their respective list
+    const userRoom = `user_${userId}`;
+    io.to(userRoom).emit('activeUsers', usersList);
   });
-});
+}
 
 /*******************************************************
- * START SERVER
+ * START SERVER WITH SOCKET.IO
  *******************************************************/
-// 5. Finally, listen on the same port:
+
+// 4. Listen on the same port:
 const PORT = process.env.PORT || 5000;
 httpServer.listen(PORT, () => {
   console.log(`Server + Socket.io listening on port ${PORT}`);

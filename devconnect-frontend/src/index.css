@@ -19,3 +19,23 @@ code {
 .dark body {
   @apply bg-gray-900 text-white;
 }
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-gray-100 dark:bg-gray-800;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-400 rounded-lg dark:bg-gray-600;
+}
+
+/* Message transition */
+.message-enter {
+  @apply opacity-0 translate-y-2;
+}
+.message-enter-active {
+  @apply opacity-100 translate-y-0 transition-all duration-200;
+}

@@ -1,12 +1,18 @@
 // frontend/src/pages/ChatPage.js
-
-import React, { useContext, useEffect, useLayoutEffect, useState, useRef } from 'react';
+import React, {
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useState,
+  useRef,
+  useCallback
+} from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { SocketContext } from '../context/SocketContext';
 import { toast } from 'react-toastify';
 import Avatar from 'react-avatar';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FaSearch, FaTimes, FaArrowDown } from 'react-icons/fa';
+import { FaSearch, FaTimes, FaArrowDown, FaPaperPlane } from 'react-icons/fa';
 
 export default function ChatPage() {
   const { auth } = useContext(AuthContext);
@@ -17,50 +23,42 @@ export default function ChatPage() {
   const [selectedUser, setSelectedUser] = useState(null);
   const [isDirectMessageOpen, setIsDirectMessageOpen] = useState(false);
 
-  // Refs for managing scroll behavior
   const messagesEndRef = useRef(null);
   const directMessagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
   const isAtBottomRef = useRef(true);
   const [showScrollButton, setShowScrollButton] = useState(false);
 
-  // Direct messages stored as a map { userId: [messages] }
   const [directMessages, setDirectMessages] = useState({});
   const [directMessage, setDirectMessage] = useState('');
 
-  // To track unread messages
   const [unreadMessages, setUnreadMessages] = useState(() => {
     const stored = localStorage.getItem('unreadMessages');
     return stored ? JSON.parse(stored) : {};
   });
 
-  // Search state for active users
   const [searchTerm, setSearchTerm] = useState('');
-
-  // Define userId as Number
   const userId = Number(auth.user.id);
 
-  // Debugging: Log active users and userId
+  // Debugging logs for active users
   useEffect(() => {
     console.log('Current userId:', userId);
     console.log('Active Users:', activeUsers);
   }, [activeUsers, userId]);
 
+  // Setup Socket.IO listeners with animations for new messages
   useEffect(() => {
     if (!socket) return;
 
-    // 1. Set up all necessary listeners first
     socket.on('chatHistory', (history) => {
-      console.log('Received chatHistory:', history); // Debugging
+      console.log('Received chatHistory:', history);
       setMessages(history);
     });
 
     socket.on('chatMessage', (msg) => {
-      console.log('Received chatMessage:', msg); // Debugging
+      console.log('Received chatMessage:', msg);
       setMessages((prev) => [...prev, msg]);
-      if (!isAtBottomRef.current) {
-        setShowScrollButton(true);
-      }
+      if (!isAtBottomRef.current) setShowScrollButton(true);
       setTyping('');
     });
 
@@ -74,10 +72,8 @@ export default function ChatPage() {
     });
 
     socket.on('directMessage', (message) => {
-      console.log('Received directMessage:', message); // Debugging
-
+      console.log('Received directMessage:', message);
       const otherUserId = message.senderId === userId ? message.recipientId : message.senderId;
-
       setDirectMessages((prev) => {
         const userMessages = prev[otherUserId] || [];
         if (!userMessages.some((c) => c.id === message.id)) {
@@ -99,7 +95,6 @@ export default function ChatPage() {
 
     socket.on('activeUsers', (users) => {
       console.log('Updated active users:', users);
-      // Active users are managed via SocketContext
     });
 
     socket.on('error', (error) => {
@@ -107,10 +102,8 @@ export default function ChatPage() {
       toast.error(error.message || 'A socket error occurred');
     });
 
-    // 2. After setting up listeners, request chat history
     socket.emit('requestChatHistory');
 
-    // 3. Cleanup on unmount
     return () => {
       socket.off('chatHistory');
       socket.off('chatMessage');
@@ -122,41 +115,35 @@ export default function ChatPage() {
     };
   }, [socket, userId, selectedUser]);
 
-  // Persist unreadMessages to localStorage
   useEffect(() => {
     localStorage.setItem('unreadMessages', JSON.stringify(unreadMessages));
   }, [unreadMessages]);
 
-  // Function to scroll to the bottom of the general messages
-  const scrollToBottom = () => {
+  const scrollToBottom = useCallback(() => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  };
+  }, []);
 
-  // Function to scroll to the bottom of the direct messages
-  const scrollToDirectMessagesBottom = () => {
+  const scrollToDirectMessagesBottom = useCallback(() => {
     if (directMessagesEndRef.current) {
       directMessagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  };
+  }, []);
 
   const handleUserClick = async (user) => {
-    if (Number(user.userId) === userId) { // **Safeguard**
+    if (Number(user.userId) === userId) {
       toast.warning("You cannot send messages to yourself.");
       return;
     }
-
     setSelectedUser(user);
     setIsDirectMessageOpen(true);
-    // Reset unread count for this user
     setUnreadMessages((prev) => {
       const updated = { ...prev };
       delete updated[user.userId];
       return updated;
     });
 
-    // Check if messages are already fetched
     if (!directMessages[user.userId]) {
       try {
         const response = await fetch(`http://localhost:5000/api/messages/${user.userId}`, {
@@ -168,7 +155,6 @@ export default function ChatPage() {
           throw new Error('Failed to fetch direct messages');
         }
         const data = await response.json();
-        // Ensure senderId and recipientId are numbers
         const parsedData = data.map((msg) => ({
           ...msg,
           senderId: Number(msg.senderId),
@@ -182,7 +168,6 @@ export default function ChatPage() {
     }
   };
 
-  // Send a direct message
   const sendDirectMessage = () => {
     if (selectedUser && directMessage.trim()) {
       const directMessageObj = {
@@ -190,23 +175,17 @@ export default function ChatPage() {
         recipientId: selectedUser.userId,
         message: directMessage.trim(),
       };
-      console.log('Sending directMessage:', directMessageObj); // Debugging
+      console.log('Sending directMessage:', directMessageObj);
       socket.emit('directMessage', directMessageObj);
       setDirectMessage('');
     }
   };
 
-  // Handle input change and emit typing status for general chat
   const handleChange = (e) => {
     setMessage(e.target.value);
-    if (e.target.value.trim()) {
-      socket.emit('typing', auth.user.username);
-    } else {
-      socket.emit('typing', '');
-    }
+    socket.emit('typing', e.target.value.trim() ? auth.user.username : '');
   };
 
-  // Send a new message in general chat
   const sendMessage = () => {
     if (!message.trim()) return;
     const msgObj = {
@@ -214,12 +193,11 @@ export default function ChatPage() {
       text: message,
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
-    console.log('Sending chatMessage:', msgObj); // Debugging
+    console.log('Sending chatMessage:', msgObj);
     socket.emit('chatMessage', msgObj);
     setMessage('');
   };
 
-  // Handle scroll events to determine if user is at the bottom
   const handleScroll = () => {
     const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
     if (scrollHeight - scrollTop - clientHeight <= 50) {
@@ -230,18 +208,15 @@ export default function ChatPage() {
     }
   };
 
-  // Function to handle clicking the scroll button
   const handleScrollButtonClick = () => {
     scrollToBottom();
     setShowScrollButton(false);
   };
 
-  // Attach scroll listener
   useEffect(() => {
     const container = messagesContainerRef.current;
     if (container) {
       container.addEventListener('scroll', handleScroll);
-      // Initial check
       handleScroll();
     }
     return () => {
@@ -251,30 +226,38 @@ export default function ChatPage() {
     };
   }, []);
 
-  // useLayoutEffect to handle scrolling after messages update
   useLayoutEffect(() => {
     if (isAtBottomRef.current) {
       scrollToBottom();
     }
-  }, [messages]);
+  }, [messages, scrollToBottom]);
 
-  // useLayoutEffect to handle scrolling after direct messages update
   useLayoutEffect(() => {
     if (selectedUser && isAtBottomRef.current) {
       scrollToDirectMessagesBottom();
     }
-  }, [directMessages, selectedUser]);
+  }, [directMessages, selectedUser, scrollToDirectMessagesBottom]);
 
-  // Handler to clear chat (Admins only)
   const handleClearChat = () => {
     if (!auth.token || auth.user.role !== 'admin') {
       toast.error('Access denied: Admins only');
       return;
     }
-    if (!window.confirm('Are you sure you want to clear the entire chat?')) {
-      return;
-    }
+    if (!window.confirm('Are you sure you want to clear the entire chat?')) return;
     socket.emit('clearChat');
+  };
+
+  // Variants for modal animations
+  const modalVariants = {
+    hidden: { opacity: 0, scale: 0.8 },
+    visible: { opacity: 1, scale: 1 },
+    exit: { opacity: 0, scale: 0.8 }
+  };
+
+  // Variants for message bubbles
+  const messageVariants = {
+    hidden: { opacity: 0, y: 10 },
+    visible: { opacity: 1, y: 0 },
   };
 
   return (
@@ -295,7 +278,7 @@ export default function ChatPage() {
         <h3 className="text-lg font-semibold mb-2 text-gray-700 dark:text-gray-200">Active Users</h3>
         <ul className="flex-1 overflow-auto">
           {activeUsers
-            .filter((user) => Number(user.userId) !== userId) // **Ensure userId is a number**
+            .filter((user) => Number(user.userId) !== userId)
             .filter((user) =>
               user.username.toLowerCase().includes(searchTerm.toLowerCase())
             )
@@ -332,34 +315,35 @@ export default function ChatPage() {
 
       {/* Main Chat Area */}
       <div className="w-3/4 flex flex-col">
-        <div className="flex-1 p-6 overflow-auto bg-gray-100 dark:bg-gray-900">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100">Community Chat</h2>
-            {auth.user.role === 'admin' && (
-              <button
-                onClick={handleClearChat}
-                className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded transition-colors duration-300"
-                aria-label="Clear Chat"
-              >
-                Clear Chat
-              </button>
-            )}
-          </div>
+        {/* Header Bar */}
+        <motion.div
+          className="px-6 py-4 bg-gradient-to-r from-blue-500 to-purple-500 text-white flex items-center justify-between"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+        >
+          <h2 className="text-2xl font-bold">Community Chat</h2>
+          {auth.user.role === 'admin' && (
+            <button
+              onClick={handleClearChat}
+              className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded transition-colors duration-300"
+              aria-label="Clear Chat"
+            >
+              Clear Chat
+            </button>
+          )}
+        </motion.div>
 
-          {/* Messages Container */}
-          <div
-            className="space-y-4"
-            ref={messagesContainerRef}
-          >
+        {/* Chat Messages */}
+        <div className="flex-1 p-6 overflow-auto bg-gray-50 dark:bg-gray-900">
+          <div className="space-y-4" ref={messagesContainerRef}>
             {messages.map((m, idx) => (
               <motion.div
                 key={m.id ? m.id : idx}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
+                variants={messageVariants}
+                initial="hidden"
+                animate="visible"
                 transition={{ duration: 0.3 }}
-                className={`flex ${
-                  m.user === auth.user.username ? 'justify-end' : 'justify-start'
-                }`}
+                className={`flex ${m.user === auth.user.username ? 'justify-end' : 'justify-start'}`}
               >
                 <div className="max-w-md flex items-end space-x-2">
                   {m.user !== auth.user.username && (
@@ -396,25 +380,35 @@ export default function ChatPage() {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Typing Indicator */}
-          {typing && <p className="text-sm italic text-gray-500 dark:text-gray-400 mt-2">{typing}</p>}
+          {typing && (
+            <motion.p
+              className="text-sm italic text-gray-500 dark:text-gray-400 mt-2"
+              aria-live="polite"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1, transition: { duration: 0.5, repeat: Infinity, repeatType: 'reverse' } }}
+            >
+              {typing}
+            </motion.p>
+          )}
 
-          {/* Scroll to Bottom Button */}
           {showScrollButton && (
-            <button
+            <motion.button
               onClick={handleScrollButtonClick}
               className="fixed bottom-24 right-8 bg-blue-600 text-white p-3 rounded-full shadow-lg hover:bg-blue-700 transition-colors"
               aria-label="Scroll to bottom"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
             >
               <FaArrowDown />
-            </button>
+            </motion.button>
           )}
         </div>
 
         {/* Message Input */}
         <div className="p-4 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 flex items-center space-x-2">
           <input
-            className="flex-1 border border-gray-300 dark:border-gray-600 p-2 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+            className="flex-1 border border-gray-300 dark:border-gray-600 p-3 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
             placeholder="Type your message..."
             value={message}
             onChange={handleChange}
@@ -423,10 +417,10 @@ export default function ChatPage() {
           />
           <button
             onClick={sendMessage}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"
+            className="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-full transition-colors flex items-center justify-center"
             aria-label="Send Message"
           >
-            Send
+            <FaPaperPlane />
           </button>
         </div>
       </div>
@@ -436,10 +430,11 @@ export default function ChatPage() {
         {isDirectMessageOpen && selectedUser && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <motion.div
-              initial={{ scale: 0.8, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.8, opacity: 0 }}
-              className="bg-white dark:bg-gray-800 w-11/12 md:w-3/4 lg:w-1/2 rounded-lg shadow-lg p-6 relative"
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              variants={modalVariants}
+              className="bg-white dark:bg-gray-800 w-11/12 md:w-3/4 lg:w-1/2 rounded-xl shadow-2xl p-6 relative"
             >
               <button
                 onClick={() => setIsDirectMessageOpen(false)}
@@ -462,11 +457,11 @@ export default function ChatPage() {
               </div>
               <div className="space-y-4 mb-4 overflow-auto h-80">
                 {(directMessages[selectedUser.userId] || []).map((message) => (
-                  <div
+                  <motion.div
                     key={message.id}
-                    className={`flex ${
-                      message.senderId === userId ? 'justify-end' : 'justify-start'
-                    }`}
+                    initial={{ opacity: 0, y: 5 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className={`flex ${message.senderId === userId ? 'justify-end' : 'justify-start'}`}
                   >
                     <div className="max-w-md flex items-end space-x-2">
                       {message.senderId !== userId && (
@@ -501,13 +496,13 @@ export default function ChatPage() {
                         </p>
                       </div>
                     </div>
-                  </div>
+                  </motion.div>
                 ))}
                 <div ref={directMessagesEndRef} />
               </div>
               <div className="flex space-x-2">
                 <input
-                  className="flex-1 border border-gray-300 dark:border-gray-600 p-2 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+                  className="flex-1 border border-gray-300 dark:border-gray-600 p-3 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
                   placeholder="Type your message..."
                   value={directMessage}
                   onChange={(e) => setDirectMessage(e.target.value)}
@@ -516,10 +511,10 @@ export default function ChatPage() {
                 />
                 <button
                   onClick={sendDirectMessage}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"
+                  className="bg-blue-600 hover:bg-blue-700 text-white p-4 rounded-full transition-colors flex items-center justify-center"
                   aria-label="Send Direct Message"
                 >
-                  Send
+                  <FaPaperPlane />
                 </button>
               </div>
             </motion.div>
